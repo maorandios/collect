@@ -5,7 +5,7 @@ import { he } from "@/lib/i18n/he";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string; fileId: string }> },
 ) {
   const auth = await requireUserApi();
@@ -17,6 +17,7 @@ export async function GET(
   }
 
   const { id, fileId } = await params;
+  const inline = new URL(request.url).searchParams.get("inline") === "1";
   const { data: file } = await auth.supabase
     .from("files")
     .select("storage_path, original_name")
@@ -29,13 +30,15 @@ export async function GET(
   }
 
   const admin = createAdminClient();
-  const { data, error } = await admin.storage
-    .from("request-files")
-    .createSignedUrl(file.storage_path, 60, { download: file.original_name });
+  const signed = inline
+    ? await admin.storage.from("request-files").createSignedUrl(file.storage_path, 60)
+    : await admin.storage
+        .from("request-files")
+        .createSignedUrl(file.storage_path, 60, { download: file.original_name });
 
-  if (error || !data?.signedUrl) {
+  if (signed.error || !signed.data?.signedUrl) {
     return NextResponse.json({ message: he.errors.generic }, { status: 500 });
   }
 
-  return NextResponse.redirect(data.signedUrl);
+  return NextResponse.redirect(signed.data.signedUrl);
 }

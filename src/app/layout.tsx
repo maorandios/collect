@@ -1,15 +1,17 @@
 import type { Metadata } from "next";
-import { Heebo } from "next/font/google";
+import localFont from "next/font/local";
 
 import { Providers } from "@/components/providers";
 import { he } from "@/lib/i18n/he";
 
 import "./globals.css";
 
-const heebo = Heebo({
-  subsets: ["hebrew", "latin"],
-  variable: "--font-heebo",
+const googleSans = localFont({
+  src: "../fonts/google-sans/GoogleSans-Variable.ttf",
+  variable: "--font-google-sans",
   display: "swap",
+  weight: "100 900",
+  adjustFontFallback: "Arial",
 });
 
 export const metadata: Metadata = {
@@ -22,7 +24,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html
       lang="he"
       dir="rtl"
-      className={`${heebo.variable} h-full`}
+      className={`${googleSans.variable} ${googleSans.className} h-full`}
       suppressHydrationWarning
     >
       <body className="flex h-full min-h-dvh flex-col">

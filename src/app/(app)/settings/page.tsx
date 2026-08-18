@@ -1,6 +1,7 @@
 import { requireUser } from "@/lib/auth/require-user";
-import { he } from "@/lib/i18n/he";
 import { GmailCard } from "@/components/settings/gmail-card";
+import { PageHeader } from "@/components/shell/page-header";
+import { he } from "@/lib/i18n/he";
 
 import { SettingsForm } from "./settings-form";
 
@@ -31,9 +32,7 @@ export default async function SettingsPage({
 
   return (
     <div className="flex h-full min-h-full flex-col">
-      <header className="border-b border-border bg-surface px-8 py-5">
-        <h1 className="text-xl font-medium">{he.settings.title}</h1>
-      </header>
+      <PageHeader title={he.settings.title} />
       <section className="grid flex-1 grid-cols-1 gap-6 p-8 xl:grid-cols-2">
         <SettingsForm
           email={user.email ?? ""}

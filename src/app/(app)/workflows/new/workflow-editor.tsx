@@ -16,10 +16,12 @@ export function WorkflowEditor({
   workflowId,
   initialJson,
   mailboxEmail,
+  title = he.workflows.newTitle,
 }: {
   workflowId?: string;
   initialJson?: string;
   mailboxEmail?: string | null;
+  title?: string;
 }) {
   const router = useRouter();
   const [id, setId] = useState(workflowId);
@@ -100,7 +102,7 @@ export function WorkflowEditor({
       <section className="flex min-h-0 flex-col border-b border-border xl:border-b-0 xl:border-e">
         <div className="flex items-center justify-between gap-3 border-b border-border bg-surface px-6 py-4">
           <div>
-            <h1 className="text-lg font-medium">{he.workflows.newTitle}</h1>
+            <h1 className="text-lg font-medium">{title}</h1>
             <p className="text-sm text-muted-foreground">{he.workflows.jsonHelp}</p>
           </div>
           <Button

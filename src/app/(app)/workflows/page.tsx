@@ -1,6 +1,9 @@
 import Link from "next/link";
 
 import { requireUser } from "@/lib/auth/require-user";
+import { EmptyState } from "@/components/feedback/empty-state";
+import { PageHeader } from "@/components/shell/page-header";
+import { StatusBadge } from "@/components/status/status-badge";
 import { buttonVariants } from "@/components/ui/button";
 import {
   Table,
@@ -16,13 +19,6 @@ import { cn } from "@/lib/utils";
 import { formatIsraelDateTime } from "@/lib/dates";
 import { scheduleTypeLabel } from "@/lib/schedule/labels";
 import { parseWorkflowDefinition } from "@/lib/workflow/schema";
-
-const statusLabels: Record<string, string> = {
-  draft: he.statuses.draft,
-  active: he.statuses.active,
-  paused: he.statuses.paused,
-  completed: he.statuses.completed,
-};
 
 const openStatuses = new Set(["scheduled", "sent", "opened", "in_progress"]);
 
@@ -54,27 +50,22 @@ export default async function WorkflowsPage() {
     }
   }
 
+  const createAction = (
+    <Link href="/workflows/new" className={cn(buttonVariants({ size: "lg" }), "h-10 px-4")}>
+      {he.actions.createWorkflow}
+    </Link>
+  );
+
   return (
     <div className="flex h-full min-h-full flex-col">
-      <header className="flex items-center justify-between gap-4 border-b border-border bg-surface px-8 py-5">
-        <h1 className="text-xl font-medium">{he.workflows.title}</h1>
-        <Link
-          href="/workflows/new"
-          className={cn(buttonVariants({ size: "lg" }), "h-10 px-4")}
-        >
-          {he.actions.createWorkflow}
-        </Link>
-      </header>
+      <PageHeader title={he.workflows.title} actions={createAction} />
       <section className="flex-1 p-8">
         {!workflows?.length ? (
-          <div className="flex h-full items-center justify-center rounded-xl border border-border bg-surface text-center shadow-sm">
-            <div>
-              <p className="text-lg font-medium">{he.workflows.emptyTitle}</p>
-              <p className="mt-2 text-sm text-muted-foreground">
-                {he.workflows.emptyDescription}
-              </p>
-            </div>
-          </div>
+          <EmptyState
+            title={he.workflows.emptyTitle}
+            description={he.workflows.emptyDescription}
+            action={createAction}
+          />
         ) : (
           <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
             <Table>
@@ -108,7 +99,9 @@ export default async function WorkflowsPage() {
                         {formatIsraelDateTime(lastActivity.get(workflow.id) ?? workflow.updated_at)}
                       </TableCell>
                       <TableCell>{openCounts.get(workflow.id) ?? 0}</TableCell>
-                      <TableCell>{statusLabels[workflow.status] ?? workflow.status}</TableCell>
+                      <TableCell>
+                        <StatusBadge status={workflow.status} />
+                      </TableCell>
                       <TableCell>
                         <WorkflowRowActions workflowId={workflow.id} status={workflow.status} />
                       </TableCell>

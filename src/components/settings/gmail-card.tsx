@@ -4,16 +4,11 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 
+import { StatusBadge } from "@/components/status/status-badge";
 import { Button } from "@/components/ui/button";
 import { he } from "@/lib/i18n/he";
 
 type MailboxStatus = "connected" | "disconnected" | "needs_reauth";
-
-const statusLabels: Record<MailboxStatus, string> = {
-  connected: he.statuses.connected,
-  disconnected: he.statuses.disconnected,
-  needs_reauth: he.statuses.needs_reauth,
-};
 
 export function GmailCard({
   email,
@@ -89,11 +84,8 @@ export function GmailCard({
       <div className="mt-6 flex items-center justify-between rounded-lg border border-border bg-background px-4 py-3">
         <div>
           <p className="text-sm text-foreground">{email ?? he.settings.noMailbox}</p>
-          <p className="text-xs text-muted-foreground">{statusLabels[status]}</p>
         </div>
-        <span className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
-          {statusLabels[status]}
-        </span>
+        <StatusBadge status={status} />
       </div>
       <div className="mt-4 flex flex-wrap gap-3">
         {status === "connected" ? (

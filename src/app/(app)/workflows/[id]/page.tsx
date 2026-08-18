@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth/require-user";
+import { he } from "@/lib/i18n/he";
 import { WorkflowEditor } from "../new/workflow-editor";
 
 export default async function EditWorkflowPage({
@@ -36,6 +37,7 @@ export default async function EditWorkflowPage({
       workflowId={data.id}
       initialJson={JSON.stringify(data.definition, null, 2)}
       mailboxEmail={mailbox?.email ?? null}
+      title={he.workflows.editTitle}
     />
   );
 }

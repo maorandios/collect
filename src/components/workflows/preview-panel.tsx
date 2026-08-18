@@ -1,28 +1,17 @@
 import { he } from "@/lib/i18n/he";
 import { computeUpcomingRuns, formatIsraelDateTime } from "@/lib/dates";
+import { scheduleLabel } from "@/lib/schedule/labels";
 import { getPublishIssues } from "@/lib/workflow/publish";
 import type { WorkflowDefinition } from "@/lib/workflow/schema";
-
-function scheduleLabel(definition: WorkflowDefinition) {
-  const schedule = definition.schedule;
-  if (schedule.type === "send_now") {
-    return he.workflow.sendNow;
-  }
-  if (schedule.type === "once") {
-    return `${he.workflow.once} · ${schedule.date} ${schedule.time}`;
-  }
-  if (schedule.type === "weekly") {
-    return `${he.workflow.weekly} · ${schedule.weekday} · ${schedule.time}`;
-  }
-  return `${he.workflow.monthly} · ${schedule.day} · ${schedule.time}`;
-}
 
 export function PreviewPanel({
   definition,
   issues,
+  mailboxEmail,
 }: {
   definition: WorkflowDefinition | null;
   issues: string[];
+  mailboxEmail?: string | null;
 }) {
   if (!definition) {
     return (
@@ -43,7 +32,7 @@ export function PreviewPanel({
       </div>
       <section className="space-y-1 text-sm">
         <p className="text-muted-foreground">{he.workflow.mailbox}</p>
-        <p>{he.workflow.noMailbox}</p>
+        <p>{mailboxEmail ?? he.workflow.noMailbox}</p>
       </section>
       <section className="space-y-1 text-sm">
         <p className="text-muted-foreground">{he.workflow.recipients}</p>

@@ -2,18 +2,57 @@ import Link from "next/link";
 
 import { requireUser } from "@/lib/auth/require-user";
 import { buttonVariants } from "@/components/ui/button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { WorkflowRowActions } from "@/components/workflows/workflow-row-actions";
 import { he } from "@/lib/i18n/he";
 import { cn } from "@/lib/utils";
 import { formatIsraelDateTime } from "@/lib/dates";
+import { scheduleTypeLabel } from "@/lib/schedule/labels";
+import { parseWorkflowDefinition } from "@/lib/workflow/schema";
+
+const statusLabels: Record<string, string> = {
+  draft: he.statuses.draft,
+  active: he.statuses.active,
+  paused: he.statuses.paused,
+  completed: he.statuses.completed,
+};
+
+const openStatuses = new Set(["scheduled", "sent", "opened", "in_progress"]);
 
 export default async function WorkflowsPage() {
   const { supabase, user } = await requireUser();
-  const { data: workflows } = await supabase
-    .from("workflows")
-    .select("id, name, status, next_run_at, definition, deleted_at")
-    .eq("user_id", user.id)
-    .is("deleted_at", null)
-    .order("created_at", { ascending: false });
+  const [{ data: workflows }, { data: requestRows }] = await Promise.all([
+    supabase
+      .from("workflows")
+      .select("id, name, status, next_run_at, definition, updated_at, deleted_at")
+      .eq("user_id", user.id)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("requests")
+      .select("workflow_id, status, is_test, updated_at")
+      .eq("user_id", user.id)
+      .eq("is_test", false),
+  ]);
+
+  const openCounts = new Map<string, number>();
+  const lastActivity = new Map<string, string>();
+  for (const row of requestRows ?? []) {
+    if (openStatuses.has(row.status)) {
+      openCounts.set(row.workflow_id, (openCounts.get(row.workflow_id) ?? 0) + 1);
+    }
+    const current = lastActivity.get(row.workflow_id);
+    if (!current || new Date(row.updated_at).getTime() > new Date(current).getTime()) {
+      lastActivity.set(row.workflow_id, row.updated_at);
+    }
+  }
 
   return (
     <div className="flex h-full min-h-full flex-col">
@@ -38,38 +77,46 @@ export default async function WorkflowsPage() {
           </div>
         ) : (
           <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
-            <table className="w-full text-sm">
-              <thead className="border-b border-border text-start">
-                <tr className="text-muted-foreground">
-                  <th className="px-4 py-3 font-medium">{he.workflows.columns.name}</th>
-                  <th className="px-4 py-3 font-medium">{he.workflows.columns.recipients}</th>
-                  <th className="px-4 py-3 font-medium">{he.workflows.columns.nextRun}</th>
-                  <th className="px-4 py-3 font-medium">{he.workflows.columns.status}</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>{he.workflows.columns.name}</TableHead>
+                  <TableHead>{he.workflows.columns.schedule}</TableHead>
+                  <TableHead>{he.workflows.columns.nextRun}</TableHead>
+                  <TableHead>{he.workflows.columns.lastActivity}</TableHead>
+                  <TableHead>{he.workflows.columns.openRequests}</TableHead>
+                  <TableHead>{he.workflows.columns.status}</TableHead>
+                  <TableHead className="text-end">{he.workflows.columns.actions}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {workflows.map((workflow) => {
-                  const definition = workflow.definition as { recipients?: unknown[] } | null;
-                  const recipients = Array.isArray(definition?.recipients)
-                    ? definition.recipients.length
-                    : 0;
+                  const parsed = parseWorkflowDefinition(workflow.definition);
+                  const schedule = parsed.success
+                    ? scheduleTypeLabel(parsed.data.schedule)
+                    : "—";
                   return (
-                    <tr key={workflow.id} className="border-b border-border last:border-0">
-                      <td className="px-4 py-3">
+                    <TableRow key={workflow.id}>
+                      <TableCell>
                         <Link href={`/workflows/${workflow.id}`} className="hover:underline">
                           {workflow.name}
                         </Link>
-                      </td>
-                      <td className="px-4 py-3">{recipients}</td>
-                      <td className="px-4 py-3">{formatIsraelDateTime(workflow.next_run_at)}</td>
-                      <td className="px-4 py-3">
-                        {workflow.status === "active" ? he.statuses.active : workflow.status === "paused" ? he.statuses.paused : he.statuses.draft}
-                      </td>
-                    </tr>
+                      </TableCell>
+                      <TableCell>{schedule}</TableCell>
+                      <TableCell>{formatIsraelDateTime(workflow.next_run_at)}</TableCell>
+                      <TableCell>
+                        {formatIsraelDateTime(lastActivity.get(workflow.id) ?? workflow.updated_at)}
+                      </TableCell>
+                      <TableCell>{openCounts.get(workflow.id) ?? 0}</TableCell>
+                      <TableCell>{statusLabels[workflow.status] ?? workflow.status}</TableCell>
+                      <TableCell>
+                        <WorkflowRowActions workflowId={workflow.id} status={workflow.status} />
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         )}
       </section>

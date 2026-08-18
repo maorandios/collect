@@ -16,3 +16,7 @@ export function getOpenAiModel() {
 export function getAppUrl() {
   return process.env.APP_URL?.replace(/\/$/, "") ?? null;
 }
+
+export function getDevSchedulesEnabled() {
+  return process.env.ENABLE_DEV_SCHEDULES === "true" && process.env.NODE_ENV !== "production";
+}

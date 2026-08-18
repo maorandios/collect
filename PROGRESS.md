@@ -159,7 +159,7 @@ RLS: משתמש רואה רק את שלו. אין מדיניות לקוח ל־`j
 
 **תאריך:** 18 באוגוסט 2026  
 **סטטוס:** הושלם מול Supabase חי  
-**השלב הבא:** ממתין לאישור לפני Phase 3 (Nylas Gmail)
+**השלב הבא:** Phase 3 אושר והושלם.
 
 ### מה נבנה
 
@@ -228,3 +228,120 @@ Happy Path:
 | `npm run build` | עבר |
 
 **כלל:** לא `supabase db push`, לא `psql`, לא חיבור Postgres, לא הרצת SQL מול הפרויקט. הקובץ נשאר בריפו; ההחלה ידנית.
+
+---
+
+## Phase 3 — Nylas Gmail
+
+**תאריך:** 18 באוגוסט 2026  
+**סטטוס:** הושלם מול Gmail חי. תיבת הבדיקה נותקה בסוף הבדיקות — יש לחבר מחדש מההגדרות לפני שימוש.  
+**השלב הבא:** Phase 4 התחיל.
+
+### מה נבנה
+
+- OAuth Hosted של Nylas ל־Gmail בלבד (`provider=google`, scope מינימלי ל־`gmail.send` + כתובת התיבה)
+- `POST /api/nylas/connect` ו־`POST /api/nylas/disconnect` דורשים משתמש מחובר
+- `GET /api/nylas/callback` ציבורי: מאמת hash של state, צריכה אטומית, מחליף code ב־grant
+- נשמרים רק `grant_id`, אימייל, provider וסטטוס `connected`. אין Google tokens במסד
+- מסך הגדרות: חיבור / ניתוק / חיבור מחדש, כתובת התיבה, סטטוס
+- תיבה אחת למשתמש. בכשל OAuth אין mailbox חלקי
+- הפעלת Workflow יוצרת Request במצב `scheduled` ו־job מסוג `send_email`
+- `send_now` ושליחת בדיקה מפעילים את ה־worker מיד. Cron לא חובר
+- `Idempotency-Key` = `jobs.idempotency_key` קבוע לכל job, גם ב־retry
+- 401/403 → `needs_reauth` בלי retries עד חיבור מחדש. 429/5xx → pending + backoff. payload קבוע → job failed
+- מייל RTL בעברית עם escaping, כפתור «פתיחת הבקשה», Magic Link מ־Phase 2, fallback לקישור
+- שליחת בדיקה לתיבה המחוברת, `is_test=true`, נושא `[בדיקה]`, מוסתרת מהדאשבורד
+- אין הפעלה בלי mailbox מחובר. השליחה תמיד לפי mailbox של המשתמש המחובר
+
+### קבצים שנוצרו או עודכנו
+
+נוצרו: `src/lib/nylas/*`, `src/lib/mailbox.ts`, `src/lib/email/*`, `src/lib/jobs/*`, `src/app/api/nylas/{connect,callback,disconnect}/route.ts`, `src/components/settings/gmail-card.tsx`
+
+עודכנו: `src/app/(app)/settings/page.tsx`, `src/app/(app)/workflows/actions.ts`, `src/app/(app)/workflows/new/*`, `src/app/(app)/workflows/[id]/page.tsx`, `src/lib/requests/create.ts`, `src/lib/i18n/he.ts`, `src/components/workflows/preview-panel.tsx`, `.env.example`
+
+### בדיקות
+
+| בדיקה | תוצאה |
+|---|---|
+| connect/disconnect בלי סשן → 401 | עבר |
+| callback עם `user_id` ב־query → שגיאה בעברית | עבר |
+| state שכבר נצרך לא ניתן לשימוש חוזר | עבר |
+| בלי מפתחות Nylas: connect → 503 בעברית, אין mailbox חלקי | עבר (לפני הוספת המפתחות) |
+| עם מפתחות: connect מחובר מחזיר URL של Nylas Hosted OAuth (`provider=google`) | עבר |
+| Callback URI מקומי רשום באפליקציית Nylas | עבר |
+| Google connector כולל `gmail.send` | עבר |
+| חיבור Gmail אמיתי: mailbox `connected`, grant_id + אימייל נשמרים, provider=google | עבר |
+| State של ה-callback המוצלח נצרך; state משומש לא ניתן לשימוש חוזר | עבר |
+| שליחת בדיקה (`is_test`) דרך התיבה המחוברת, `provider_message_id` נשמר | עבר |
+| נושא/גוף עברית RTL, קידומת `[בדיקה]`, כפתור «פתיחת הבקשה» | עבר |
+| אותו `Idempotency-Key` לא יוצר שליחה כפולה | עבר |
+| בקשת בדיקה מוסתרת מהדאשבורד | עבר |
+| Magic Link בלי סשן בעלים → טופס; GET לא מסמן נפתח; אינטראקציה ראשונה → `in_progress` | עבר |
+| שליחת טופס מעדכנת את הבקשה ל־`completed` והדאשבורד מציג «הושלם» | עבר |
+| לא ניתן לשלוח דרך mailbox של משתמש אחר (בעלות + RLS) | עבר |
+| ניתוק: סטטוס `disconnected`, grant נמחק ב-Nylas (404), אין הפעלה בלי תיבה מחוברת | עבר |
+
+| פקודה | תוצאה |
+|---|---|
+| `npm run lint` | עבר |
+| `npm run typecheck` | עבר |
+| `npm run build` | עבר |
+
+Phase 3 הושלם מול Gmail חי. אחרי בדיקת הניתוק התיבה במצב `disconnected` — לחבר מחדש מההגדרות לפני שליחה נוספת.
+
+---
+
+## Phase 4 — Cron, תזמונים ותזכורות
+
+**תאריך:** 18 באוגוסט 2026  
+**סטטוס:** קוד הושלם ונבדק מקומית. חסרים: הדבקת SQL לסטטוסים `completed`/`skipped`, חיבור Gmail מחדש, ו־Cron חי מול URL ציבורי.  
+**השלב הבא:** ממתין לאישור לפני Phase 5 (AI Chat). לא התחיל.
+
+### מה נבנה
+
+- תזמון `send_now` / `once` / `weekly` / `monthly` ב־`Asia/Jerusalem`, שמירה כ־timestamptz UTC, בלי חישוב offset ידני (`date-fns-tz`)
+- `once` בעבר נחסם בפרסום. `monthly.day` 31 מתאים ליום האחרון בחודש. אין drift: ההרצה הבאה נגזרת מהשעה המתוזמנת
+- כיבוי ממושך: catch-up אחד ואז המועד העתידי הבא
+- `POST /api/cron/tick` עם השוואת `CRON_SECRET` בטוחה, דחיית method אחר, תשובה עם counters בלבד
+- Tick: claim workflows → יצירת Requests לפי `scheduled_for` המקורי → jobs → עדכון `next_run_at` → claim jobs → worker
+- תזכורת רק אחרי שליחה מוצלחת: `reminder_due_at = sent_at + delay`, מפתח `send_reminder:{request_id}:{reminder_due_at}`
+- בקשה `completed`/פג תוקף מבטלת תזכורת בלי לשלוח
+- Pause / Resume / עריכה (מחשבת `next_run_at` אם התזמון השתנה, לא נוגעת ב-snapshot) / מחיקה רכה
+- UI רשימת וורקפלואוס: תזמון, הרצה הבאה, פעילות אחרונה, בקשות פתוחות, סטטוס, פעולות
+- `ENABLE_DEV_SCHEDULES=true` מקומית בלבד מאפשר `afterMinutes`. לא פועל ב־production
+
+### קבצים שנוצרו או עודכנו
+
+נוצרו: `src/lib/schedule/*`, `src/lib/cron/*`, `src/lib/jobs/keys.ts`, `supabase/migrations/0002_phase4_statuses.sql`
+
+עודכנו: `src/app/api/cron/tick/route.ts`, `src/lib/jobs/worker.ts`, `src/lib/jobs/enqueue.ts`, `src/lib/requests/create.ts`, `src/lib/dates.ts`, `src/lib/env.ts`, `src/lib/workflow/publish.ts`, `src/lib/workflow/schema.ts`, `src/lib/email/render.ts`, `src/app/(app)/workflows/*`, `src/components/workflows/*`, `src/lib/i18n/he.ts`, `.env.example`
+
+### בדיקות
+
+| בדיקה | תוצאה |
+|---|---|
+| once בעתיד / בעבר | עבר |
+| weekly יום ראשון (0) | עבר |
+| monthly יום 31 בפברואר → 28 | עבר |
+| מעבר שעון קיץ בישראל שומר 10:00 | עבר |
+| next run בלי drift אחרי השהיית worker | עבר |
+| pause/resume בלי backfill | עבר |
+| מפתחות `send_email:` / `send_reminder:` יציבים | עבר |
+| Cron GET → 405, בלי סוד → 401 | עבר |
+| due workflow: Request אחד לכל נמען, אותו `scheduled_for` | עבר |
+| שתי קריאות Cron מקבילות בלי כפילות | עבר |
+| עריכת Workflow לא משנה snapshot קיים | עבר |
+| completed מבטל תזכורת (לא נשלח מייל) | עבר |
+| Cron חי מול Vercel / מייל מתוזמן / תזכורת בתיבה | ממתין — אין URL ציבורי, Gmail מנותק, וחסר SQL לסטטוסים |
+
+| פקודה | תוצאה |
+|---|---|
+| `npm test` | עבר (12) |
+| `npm run lint` | עבר |
+| `npm run typecheck` | עבר |
+| `npm run build` | עבר |
+
+דוגמה מתוקנת: `weekday: 1` (יום שני) מ־18.08.2026 12:00 ישראל → `next_run_at` UTC `2026-08-24T07:00:00Z`, תצוגת ישראל `24.08.2026, 10:00`. הדוח הקודם (`2026-08-25`) נבע מ־`advanceOne` שהוסיף 7 ימים ל־`next_run_at` לא־מיושר במקום ליישר ל־`schedule.weekday`.
+
+יש להדביק ב-Supabase SQL editor את `supabase/migrations/0002_phase4_statuses.sql` (`completed` ל-workflows, `skipped` ל-jobs). אין להגדיר `app_url` ב-Vault כ-localhost. Phase 5 לא התחיל.
+

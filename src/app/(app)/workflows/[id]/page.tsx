@@ -9,12 +9,23 @@ export default async function EditWorkflowPage({
 }) {
   const { id } = await params;
   const { supabase, user } = await requireUser();
-  const { data } = await supabase
-    .from("workflows")
-    .select("id, definition")
-    .eq("id", id)
-    .eq("user_id", user.id)
-    .maybeSingle();
+  const [{ data }, mailboxResult] = await Promise.all([
+    supabase
+      .from("workflows")
+      .select("id, definition")
+      .eq("id", id)
+      .eq("user_id", user.id)
+      .is("deleted_at", null)
+      .maybeSingle(),
+    supabase
+      .from("mailboxes")
+      .select("email, status")
+      .eq("user_id", user.id)
+      .eq("status", "connected")
+      .limit(1)
+      .maybeSingle(),
+  ]);
+  const mailbox = mailboxResult.data;
 
   if (!data) {
     notFound();
@@ -24,6 +35,7 @@ export default async function EditWorkflowPage({
     <WorkflowEditor
       workflowId={data.id}
       initialJson={JSON.stringify(data.definition, null, 2)}
+      mailboxEmail={mailbox?.email ?? null}
     />
   );
 }

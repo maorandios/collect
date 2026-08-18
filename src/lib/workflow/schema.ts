@@ -2,6 +2,17 @@ import { z } from "zod";
 
 export const TIMEZONE = "Asia/Jerusalem" as const;
 
+/** JS/getDay mapping: 0 Sunday … 6 Saturday. Not ISO (where 1 is Monday). */
+export const WEEKDAY = {
+  sunday: 0,
+  monday: 1,
+  tuesday: 2,
+  wednesday: 3,
+  thursday: 4,
+  friday: 5,
+  saturday: 6,
+} as const;
+
 const timezoneSchema = z.literal(TIMEZONE);
 
 const timeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
@@ -19,7 +30,7 @@ const scheduleSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("weekly"),
-    weekday: z.number().int().min(0).max(6),
+    weekday: z.number().int().min(WEEKDAY.sunday).max(WEEKDAY.saturday),
     time: timeSchema,
     timezone: timezoneSchema,
   }),
@@ -74,6 +85,7 @@ export const workflowDefinitionSchema = z.object({
   reminder: z.object({
     enabled: z.boolean(),
     afterHours: z.number().positive().nullable(),
+    afterMinutes: z.number().positive().nullable().optional(),
   }),
 });
 

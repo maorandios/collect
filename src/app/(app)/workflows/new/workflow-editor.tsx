@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
-import { saveWorkflowDraft, activateWorkflow } from "@/app/(app)/workflows/actions";
+import { saveWorkflowDraft, activateWorkflow, sendTestWorkflow } from "@/app/(app)/workflows/actions";
 import { Button } from "@/components/ui/button";
 import { JsonEditor } from "@/components/workflows/json-editor";
 import { PreviewPanel } from "@/components/workflows/preview-panel";
@@ -15,9 +15,11 @@ import { parseWorkflowDefinition, type WorkflowDefinition } from "@/lib/workflow
 export function WorkflowEditor({
   workflowId,
   initialJson,
+  mailboxEmail,
 }: {
   workflowId?: string;
   initialJson?: string;
+  mailboxEmail?: string | null;
 }) {
   const router = useRouter();
   const [id, setId] = useState(workflowId);
@@ -51,6 +53,24 @@ export function WorkflowEditor({
           } else {
             router.refresh();
           }
+        }
+        toast.success(result.message);
+      } else {
+        toast.error(result.message);
+      }
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function onSendTest() {
+    setPending(true);
+    try {
+      const result = await sendTestWorkflow({ workflowId: id, jsonText });
+      if (result.ok) {
+        if (result.workflowId && result.workflowId !== id) {
+          setId(result.workflowId);
+          router.replace(`/workflows/${result.workflowId}`);
         }
         toast.success(result.message);
       } else {
@@ -99,13 +119,16 @@ export function WorkflowEditor({
           <Button type="button" variant="outline" className="h-10" disabled={pending} onClick={onSaveDraft}>
             {pending ? he.loading.saving : he.actions.saveDraft}
           </Button>
+          <Button type="button" variant="outline" className="h-10" disabled={pending} onClick={onSendTest}>
+            {pending ? he.workflows.sendingTest : he.actions.sendTest}
+          </Button>
           <Button type="button" className="h-10" disabled={pending} onClick={onActivate}>
             {he.actions.publish}
           </Button>
         </div>
       </section>
       <section className="min-h-0 bg-background p-6">
-        <PreviewPanel definition={definition} issues={issues} />
+        <PreviewPanel definition={definition} issues={issues} mailboxEmail={mailboxEmail} />
       </section>
     </div>
   );

@@ -16,6 +16,7 @@ type CreateRequestsInput = {
 
 export async function createRequestsForRun(input: CreateRequestsInput) {
   const admin = createAdminClient();
+  const scheduledFor = input.scheduledFor.toISOString();
   const expiresAt = new Date(
     input.isTest
       ? Date.now() + TEST_EXPIRY_HOURS * 60 * 60 * 1000
@@ -23,12 +24,13 @@ export async function createRequestsForRun(input: CreateRequestsInput) {
   );
 
   let recipients = input.definition.recipients;
-  if (input.definition.schedule.type === "send_now") {
+  if (!input.isTest) {
     const { data: existing } = await admin
       .from("requests")
       .select("recipient_email")
       .eq("workflow_id", input.workflowId)
-      .eq("is_test", Boolean(input.isTest));
+      .eq("scheduled_for", scheduledFor)
+      .eq("is_test", false);
     const alreadyCreated = new Set(
       (existing ?? []).map((row) => row.recipient_email.toLowerCase()),
     );
@@ -36,7 +38,13 @@ export async function createRequestsForRun(input: CreateRequestsInput) {
       (recipient) => !alreadyCreated.has(recipient.email.toLowerCase()),
     );
     if (recipients.length === 0) {
-      return [];
+      const { data: current } = await admin
+        .from("requests")
+        .select("id, recipient_email")
+        .eq("workflow_id", input.workflowId)
+        .eq("scheduled_for", scheduledFor)
+        .eq("is_test", false);
+      return current ?? [];
     }
   }
 
@@ -46,26 +54,27 @@ export async function createRequestsForRun(input: CreateRequestsInput) {
     mailbox_id: input.mailboxId,
     recipient_name: recipient.name,
     recipient_email: recipient.email,
-    scheduled_for: input.scheduledFor.toISOString(),
-    status: "sent",
+    scheduled_for: scheduledFor,
+    status: "scheduled",
     definition_snapshot: input.definition,
     token_version: 1,
     token_expires_at: expiresAt.toISOString(),
     is_test: Boolean(input.isTest),
-    sent_at: new Date().toISOString(),
-    reminder_due_at:
-      input.definition.reminder.enabled && input.definition.reminder.afterHours
-        ? new Date(
-            Date.now() + input.definition.reminder.afterHours * 60 * 60 * 1000,
-          ).toISOString()
-        : null,
+    sent_at: null,
+    reminder_due_at: null,
   }));
 
   const { data, error } = await admin.from("requests").insert(rows).select("id, recipient_email");
 
   if (error) {
     if (error.code === "23505") {
-      throw new Error("duplicate_request");
+      const { data: current } = await admin
+        .from("requests")
+        .select("id, recipient_email")
+        .eq("workflow_id", input.workflowId)
+        .eq("scheduled_for", scheduledFor)
+        .eq("is_test", Boolean(input.isTest));
+      return current ?? [];
     }
     throw error;
   }

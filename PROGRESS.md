@@ -129,14 +129,14 @@ RLS: משתמש רואה רק את שלו. אין מדיניות לקוח ל־`j
 
 1. מילוי `.env.local` לפי `.env.example`
 2. פרויקט Supabase עם Email OTP ותבנית מייל `{{ .Token }}`
-3. הרצת `supabase/migrations/0001_init.sql`
+3. הדבקה ידנית של `supabase/migrations/0001_init.sql` ב־SQL Editor (לא דרך הסוכן)
 4. יצירת סודות Vault: `app_url`, `cron_secret`
 
 בלי אלה: OTP לא יישלח, שמירת פרופיל תיכשל, ו־pg_cron לא יפעיל את ה־tick.
 
 ### הערות תפעול ל־Supabase
 
-- תבנית מייל Auth: `{{ .Token }}`, לא קישור Magic Link.
+- תבנית מייל Auth: `{{ .Token }}` בלבד, בלי `{{ .ConfirmationURL }}`. להדביק `supabase/auth/otp-email.html` גם ב־Confirm sign up וגם ב־Magic link. לכבות Confirm email כדי שבפעם הראשונה יישלח OTP ולא קישור אישור.
 - בפיתוח מקומי: להפעיל `POST /api/cron/tick` ידנית עם `Authorization: Bearer $CRON_SECRET`. לא לשמור `http://localhost:3000` ב־Vault של פרויקט hosted — pg_cron רץ בצד Supabase ולא מגיע ללפטופ.
 - בפריסה: לשמור ב־Vault את כתובת ה־Vercel האמיתית כ־`app_url`, ואת אותו ערך של `CRON_SECRET` כ־`cron_secret`.
 - Tunnel ציבורי רק אם באמת צריך ש־cron hosted יפגע בשרת מקומי.
@@ -151,3 +151,80 @@ RLS: משתמש רואה רק את שלו. אין מדיניות לקוח ל־`j
 - Sidebar ימני בקוד: `flex` עם `dir=rtl` וה־sidebar כילד ראשון; `overflow-hidden` על ה־shell.
 - הרשאות SQL: `REVOKE EXECUTE` מפורש מ־`public`/`anon`/`authenticated` ל־`claim_due_workflows`, `claim_due_jobs`, `invoke_cron_tick`. `invoke_cron_tick` גם מ־`service_role`. `GRANT EXECUTE` לפונקציות ה־claim רק ל־`service_role`. `SECURITY DEFINER` עם `search_path = public, pg_temp`.
 - Vault: אין לשמור localhost ב־`app_url` בפרויקט hosted. בפיתוח tick ידני; בפריסה URL של Vercel.
+- Git: אותחל. קומיט ראשון `4a2ee6e` — Phase 1 בלבד. אין `.env.local` ואין סודות בקומיט.
+
+---
+
+## Phase 2 — Runtime ידני (ללא AI וללא Gmail)
+
+**תאריך:** 18 באוגוסט 2026  
+**סטטוס:** הושלם מול Supabase חי  
+**השלב הבא:** ממתין לאישור לפני Phase 3 (Nylas Gmail)
+
+### מה נבנה
+
+- Zod schema ל־Workflow Definition + דוגמת רוני (`send_now` כדי לבדוק בלי להמתין לחודש)
+- עורך JSON במסך מפוצל + Preview חי בעברית. העורך עצמו LTR/monospace; שאר הממשק RTL
+- שמירת טיוטה מפנה ל־`/workflows/[id]` כדי שרענון יטען את הטיוטה
+- הפעלה שיוצרת Request לכל נמען עם `definition_snapshot`. ב־`send_now` הפעלה כפולה לא יוצרת Request נוסף
+- HMAC Magic Link: `request_id` + `token_version` + `expires_at`, חתום ב־`MAGIC_LINK_SECRET`
+- `GET /r/[token]` מאמת, שם Cookie HttpOnly על תשובת ה־redirect, ומפנה ל־`/r` בלי הטוקן ב־URL
+- GET לא מסמן נפתח; `POST /api/public/touch` אחרי אינטראקציה ראשונה מעדכן `opened_at` ו־`in_progress`
+- טופס דינמי, שמירת טיוטה, שליחה; רענון טוען תשובות וקבצים שנשמרו
+- העלאה ישירה ל־Storage עם Signed Upload URL + finalize. נתיב: `{requestId}/{fieldId}/{uuid}-{filename}`
+- דאשבורד מסתיר `is_test=true` כברירת מחדל
+- פרטי בקשה, העתקת קישור, הורדת קבצים ב־Signed URL
+- בקשה שהושלמה נעולה: טופס, draft, upload ו־submit מחזירים 409 / מסך «הבקשה כבר הוגשה»
+
+### תקלות שתוקנו בסגירה
+
+- עורך JSON ירש RTL והמבנה נראה הפוך — `dir="ltr"`, `text-align: left`, `font-family: monospace`, `wrap="off"`, scrollbar פנימי
+- אחרי שמירת טיוטה ב־`/workflows/new` רענון איבד את הטיוטה — `router.replace(/workflows/[id])`
+- רענון טופס נמען לא הציג טיוטה/קבצים — טעינה מ־`submissions` ו־`files`
+- הפעלה כפולה של `send_now` יצרה Request נוסף כי `scheduled_for` השתנה — דילוג על נמענים שכבר יש להם בקשה
+- טוקן שפג תוקפו הופנה ל־`/r/invalid` במקום `/r/expired` — בדיקת תפוגה אחרי אימות חתימה
+- `upload-finalize` לא חסם בקשה שהושלמה
+
+### בדיקות שורצו מול Supabase חי
+
+Happy Path:
+
+| בדיקה | תוצאה |
+|---|---|
+| יצירת Workflow מדוגמת רוני עם `send_now` | עבר |
+| שמירת טיוטה וטעינה מחדש | עבר |
+| הפעלת Workflow | עבר |
+| Request אחד עם `definition_snapshot` | עבר |
+| Magic Link תקין | עבר |
+| פתיחה בלי סשן בעלים, redirect מ־`/r/[token]` ל־`/r` + Cookie | עבר |
+| GET לא משנה סטטוס | עבר |
+| אינטראקציה ראשונה → `in_progress` | עבר |
+| העלאת PDF ותמונות ל־Storage | עבר |
+| שמירת טיוטה, רענון, מידע נשמר | עבר |
+| שליחת טופס → `completed` | עבר |
+| תשובות וקבצים אצל בעל החשבון | עבר |
+| הורדה ב־Signed URL | עבר |
+| בקשה שהושלמה נעולה | עבר |
+
+שליליות:
+
+| בדיקה | תוצאה |
+|---|---|
+| טוקן ששונה בתו אחד → `/r/invalid` | עבר |
+| טוקן שפג תוקפו → `/r/expired` | עבר |
+| `/r` בלי Cookie | עבר |
+| קובץ מסוג אסור | עבר |
+| קובץ גדול מדי | עבר |
+| Submit בלי שדות חובה | עבר |
+| הפעלה כפולה בלי Request נוסף | עבר |
+| משתמש אחר: RLS ריק, בלי תשובות/קבצים, הורדה 404 | עבר |
+
+מסד ו־Storage: `workflows`, `requests`, `submissions`, `files`, `request_events`, bucket `request-files`. נתיבים בצורה `{requestId}/{fieldId}/{uuid}-{filename}`.
+
+| פקודה | תוצאה |
+|---|---|
+| `npm run lint` | עבר |
+| `npm run typecheck` | עבר |
+| `npm run build` | עבר |
+
+**כלל:** לא `supabase db push`, לא `psql`, לא חיבור Postgres, לא הרצת SQL מול הפרויקט. הקובץ נשאר בריפו; ההחלה ידנית.

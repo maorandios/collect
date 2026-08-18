@@ -30,10 +30,10 @@ export async function updateSession(request: NextRequest) {
     request,
   });
 
-  const { url, anonKey, isConfigured } = getPublicSupabaseConfig();
+  const { url, publishableKey, isConfigured } = getPublicSupabaseConfig();
   const pathname = request.nextUrl.pathname;
 
-  if (!isConfigured || !url || !anonKey) {
+  if (!isConfigured || !url || !publishableKey) {
     if (isProtectedPage(pathname)) {
       const loginUrl = request.nextUrl.clone();
       loginUrl.pathname = "/login";
@@ -44,7 +44,7 @@ export async function updateSession(request: NextRequest) {
     return supabaseResponse;
   }
 
-  const supabase = createServerClient(url, anonKey, {
+  const supabase = createServerClient(url, publishableKey, {
     cookies: {
       getAll() {
         return request.cookies.getAll();

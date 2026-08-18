@@ -4,15 +4,15 @@ import { cookies } from "next/headers";
 import { getPublicSupabaseConfig } from "@/lib/env";
 
 export async function createClient() {
-  const { url, anonKey, isConfigured } = getPublicSupabaseConfig();
+  const { url, publishableKey, isConfigured } = getPublicSupabaseConfig();
 
-  if (!isConfigured || !url || !anonKey) {
+  if (!isConfigured || !url || !publishableKey) {
     throw new Error("missing_supabase_config");
   }
 
   const cookieStore = await cookies();
 
-  return createServerClient(url, anonKey, {
+  return createServerClient(url, publishableKey, {
     cookies: {
       getAll() {
         return cookieStore.getAll();

@@ -10,11 +10,30 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { formatIsraelDateTime } from "@/lib/dates";
 import { he } from "@/lib/i18n/he";
+import { relatedName } from "@/lib/supabase/relations";
 import { cn } from "@/lib/utils";
 
+const statusLabels: Record<string, string> = {
+  draft: he.statuses.draft,
+  scheduled: he.statuses.scheduled,
+  sent: he.statuses.sent,
+  opened: he.statuses.opened,
+  in_progress: he.statuses.in_progress,
+  completed: he.statuses.completed,
+  failed: he.statuses.failed,
+  expired: he.statuses.expired,
+};
+
 export default async function RequestsPage() {
-  await requireUser();
+  const { supabase, user } = await requireUser();
+  const { data: rows } = await supabase
+    .from("requests")
+    .select("id, recipient_name, recipient_email, scheduled_for, status, updated_at, workflows(name)")
+    .eq("user_id", user.id)
+    .eq("is_test", false)
+    .order("created_at", { ascending: false });
 
   return (
     <div className="flex h-full min-h-full flex-col">
@@ -42,16 +61,32 @@ export default async function RequestsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={7} className="h-48 text-center">
-                  <p className="font-medium text-foreground">
-                    {he.requests.emptyTitle}
-                  </p>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    {he.requests.emptyDescription}
-                  </p>
-                </TableCell>
-              </TableRow>
+              {!rows?.length ? (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={7} className="h-48 text-center">
+                    <p className="font-medium text-foreground">{he.requests.emptyTitle}</p>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      {he.requests.emptyDescription}
+                    </p>
+                  </TableCell>
+                </TableRow>
+              ) : (
+                rows.map((row) => (
+                  <TableRow key={row.id}>
+                    <TableCell>{relatedName(row.workflows)}</TableCell>
+                    <TableCell>{row.recipient_name ?? "—"}</TableCell>
+                    <TableCell>{row.recipient_email}</TableCell>
+                    <TableCell>{formatIsraelDateTime(row.scheduled_for)}</TableCell>
+                    <TableCell>{statusLabels[row.status] ?? row.status}</TableCell>
+                    <TableCell>{formatIsraelDateTime(row.updated_at)}</TableCell>
+                    <TableCell>
+                      <Link href={`/requests/${row.id}`} className="hover:underline">
+                        {he.actions.viewRequest}
+                      </Link>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </div>

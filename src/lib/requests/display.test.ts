@@ -414,6 +414,7 @@ test("recurrence is one-time or repeating only", () => {
     recurrenceLabel({ type: "monthly", day: 1, time: "10:00", timezone: "Asia/Jerusalem" }),
     he.workflow.recurring,
   );
+  assert.equal(recurrenceLabel({ type: "manual" }), he.workflow.manual);
   assert.equal(recurrenceLabel(null), "—");
 });
 

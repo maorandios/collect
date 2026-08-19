@@ -3,7 +3,7 @@
 import { Dialog } from "@base-ui/react/dialog";
 import Link from "next/link";
 import { X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { RequestDetails } from "@/components/requests/request-details";
 import { buttonVariants } from "@/components/ui/button";
@@ -19,12 +19,9 @@ export function RequestPanel({
   onClose: () => void;
 }) {
   const [displayed, setDisplayed] = useState(item);
-
-  useEffect(() => {
-    if (item) {
-      setDisplayed(item);
-    }
-  }, [item]);
+  if (item && item !== displayed) {
+    setDisplayed(item);
+  }
 
   return (
     <Dialog.Root

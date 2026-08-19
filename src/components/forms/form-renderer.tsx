@@ -4,10 +4,9 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
+import { FileUpload } from "@/components/forms/file-upload";
+import { FormFieldRenderer } from "@/components/forms/form-field-renderer";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { he } from "@/lib/i18n/he";
 import type { WorkflowDefinition, WorkflowField } from "@/lib/workflow/schema";
 
@@ -55,12 +54,7 @@ function FileField({
   const [pending, setPending] = useState(false);
   const [files, setFiles] = useState<string[]>(initialFiles);
 
-  async function onChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const selected = event.target.files?.[0];
-    event.target.value = "";
-    if (!selected) {
-      return;
-    }
+  async function uploadFile(selected: File) {
     const mimeType = inferMimeType(selected);
     onInteract();
     setPending(true);
@@ -122,19 +116,19 @@ function FileField({
 
   return (
     <div className="space-y-2">
-      <Input
-        type="file"
+      <FileUpload
         accept={field.allowedMimeTypes.join(",")}
-        disabled={disabled || pending || files.length >= field.maxFiles}
-        onChange={onChange}
-        className="h-10"
+        maxFiles={field.maxFiles}
+        maxFileSizeMb={field.maxFileSizeMb}
+        allowedMimeTypes={field.allowedMimeTypes}
+        disabled={disabled}
+        pending={pending}
+        files={files}
+        mode="live"
+        onSelect={(selected) => {
+          void uploadFile(selected);
+        }}
       />
-      {pending ? <p className="text-xs text-muted-foreground">{he.recipient.uploading}</p> : null}
-      {files.map((name, index) => (
-        <p key={`${name}-${index}`} className="text-xs text-muted-foreground">
-          {name}
-        </p>
-      ))}
     </div>
   );
 }
@@ -145,24 +139,33 @@ export function FormRenderer({
   initialAnswers = {},
   initialFiles = [],
   readOnly = false,
+  mode = "live",
 }: {
-  definition: WorkflowDefinition;
+  definition: Pick<WorkflowDefinition, "name" | "email" | "fields">;
   senderName: string;
   initialAnswers?: Answers;
   initialFiles?: { fieldId: string; name: string }[];
   readOnly?: boolean;
+  mode?: "live" | "preview";
 }) {
   const router = useRouter();
   const [answers, setAnswers] = useState<Answers>(initialAnswers);
   const [pending, setPending] = useState(false);
   const touched = useRef(false);
+  const preview = mode === "preview";
 
   function update(fieldId: string, value: unknown) {
+    if (preview) {
+      return;
+    }
     void touchOnce(touched);
     setAnswers((current) => ({ ...current, [fieldId]: value }));
   }
 
   async function saveDraft() {
+    if (preview) {
+      return;
+    }
     setPending(true);
     try {
       await touchOnce(touched);
@@ -183,6 +186,9 @@ export function FormRenderer({
   }
 
   async function submit() {
+    if (preview) {
+      return;
+    }
     setPending(true);
     try {
       await touchOnce(touched);
@@ -203,12 +209,17 @@ export function FormRenderer({
   }
 
   return (
-    <div className="mx-auto w-full max-w-2xl rounded-xl border border-border bg-surface p-8 shadow-sm">
+    <div className="relative mx-auto w-full max-w-2xl rounded-xl border border-border bg-surface p-8 shadow-sm">
+      {preview ? (
+        <span className="absolute start-6 top-6 rounded-full bg-primary/10 px-2.5 py-1 text-xs text-primary">
+          {he.studio.previewBadge}
+        </span>
+      ) : null}
       <p className="text-sm text-muted-foreground">{senderName}</p>
-      <h1 className="mt-2 text-2xl font-medium">{definition.name}</h1>
-      <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
-        {definition.email.body}
-      </p>
+      <h1 className="mt-2 text-2xl font-medium">{definition.name || he.studio.notSet}</h1>
+      {definition.email.body.trim() ? (
+        <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{definition.email.body}</p>
+      ) : null}
       <form
         className="mt-8 space-y-6"
         onSubmit={(event) => {
@@ -217,86 +228,46 @@ export function FormRenderer({
         }}
       >
         {definition.fields.map((field) => (
-          <div key={field.id} className="space-y-2">
-            <Label htmlFor={field.id}>
-              {field.label}
-              {field.required ? ` · ${he.validation.required}` : ""}
-            </Label>
-            {field.helpText ? (
-              <p className="text-xs text-muted-foreground">{field.helpText}</p>
-            ) : null}
-            {field.type === "short_text" ? (
-              <Input
-                id={field.id}
-                className="h-10"
-                required={field.required}
-                value={String(answers[field.id] ?? "")}
-                disabled={readOnly}
-                onChange={(event) => update(field.id, event.target.value)}
-              />
-            ) : null}
-            {field.type === "long_text" ? (
-              <Textarea
-                id={field.id}
-                required={field.required}
-                value={String(answers[field.id] ?? "")}
-                disabled={readOnly}
-                onChange={(event) => update(field.id, event.target.value)}
-              />
-            ) : null}
-            {field.type === "number" ? (
-              <Input
-                id={field.id}
-                type="number"
-                className="h-10"
-                required={field.required}
-                value={answers[field.id] === undefined || answers[field.id] === null ? "" : String(answers[field.id])}
-                disabled={readOnly}
-                onChange={(event) => update(field.id, Number(event.target.value))}
-              />
-            ) : null}
-            {field.type === "date" ? (
-              <Input
-                id={field.id}
-                type="date"
-                className="h-10"
-                required={field.required}
-                value={String(answers[field.id] ?? "")}
-                disabled={readOnly}
-                onChange={(event) => update(field.id, event.target.value)}
-              />
-            ) : null}
-            {field.type === "confirmation" ? (
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  id={field.id}
-                  type="checkbox"
-                  checked={answers[field.id] === true}
-                  disabled={readOnly}
-                  onChange={(event) => update(field.id, event.target.checked)}
-                />
-                {field.label}
-              </label>
-            ) : null}
-            {field.type === "file" ? (
-              <FileField
-                field={field}
-                onInteract={() => void touchOnce(touched)}
-                initialFiles={initialFiles
-                  .filter((file) => file.fieldId === field.id)
-                  .map((file) => file.name)}
-                disabled={readOnly}
-              />
-            ) : null}
-          </div>
+          <FormFieldRenderer
+            key={field.id}
+            field={field}
+            value={answers[field.id]}
+            disabled={readOnly || preview}
+            onChange={(value) => update(field.id, value)}
+            fileInput={
+              field.type === "file" ? (
+                preview ? (
+                  <FileUpload
+                    accept={field.allowedMimeTypes.join(",")}
+                    maxFiles={field.maxFiles}
+                    maxFileSizeMb={field.maxFileSizeMb}
+                    allowedMimeTypes={field.allowedMimeTypes}
+                    files={[]}
+                    mode="preview"
+                  />
+                ) : (
+                  <FileField
+                    field={field}
+                    onInteract={() => void touchOnce(touched)}
+                    initialFiles={initialFiles
+                      .filter((file) => file.fieldId === field.id)
+                      .map((file) => file.name)}
+                    disabled={readOnly}
+                  />
+                )
+              ) : undefined
+            }
+          />
         ))}
         <div className="flex gap-3">
-          <Button type="submit" className="h-10" disabled={pending || readOnly}>
+          <Button type="submit" className="h-10" disabled={pending || readOnly || preview}>
             {he.recipient.submit}
           </Button>
-          <Button type="button" variant="outline" className="h-10" disabled={pending || readOnly} onClick={() => void saveDraft()}>
-            {he.recipient.saveDraft}
-          </Button>
+          {preview ? null : (
+            <Button type="button" variant="outline" className="h-10" disabled={pending || readOnly} onClick={() => void saveDraft()}>
+              {he.recipient.saveDraft}
+            </Button>
+          )}
         </div>
       </form>
     </div>

@@ -11,114 +11,40 @@ import { processDueJobs } from "@/lib/jobs/worker";
 import { getConnectedMailboxForUser } from "@/lib/mailbox";
 import { createRequestsForRun, mapRequestError } from "@/lib/requests/create";
 import { computeNextRunAt } from "@/lib/schedule/next-run";
+import {
+  activateGuard,
+  draftSaveRowPatch,
+  parseEditorJson,
+  publishedRowFromEditor,
+  publishChangesGuard,
+  requirePublishedEditorJson,
+} from "@/lib/workflow/editor-contract";
+import { activationPlan, publishChangesPlan, type WorkflowStatus } from "@/lib/workflow/lifecycle";
 import { canPublish } from "@/lib/workflow/publish";
 import { parseWorkflowDefinition, type WorkflowDefinition } from "@/lib/workflow/schema";
 
-function parseJsonText(jsonText: string) {
-  try {
-    return parseWorkflowDefinition(JSON.parse(jsonText));
-  } catch {
-    return { success: false as const };
-  }
-}
-
-type WorkflowStatus = "draft" | "active" | "paused" | "completed";
-
-async function saveWorkflowRecord({
-  supabase,
-  userId,
-  workflowId,
-  definition,
-  mailboxId,
-  status,
-  nextRunAt,
-}: {
-  supabase: Awaited<ReturnType<typeof requireUser>>["supabase"];
-  userId: string;
-  workflowId?: string;
-  definition: WorkflowDefinition;
-  mailboxId: string | null;
+type WorkflowRow = {
   status: WorkflowStatus;
-  nextRunAt: Date | null;
-}) {
-  const payload = {
-    user_id: userId,
-    name: definition.name,
-    definition: {
-      ...definition,
-      senderMailboxId: mailboxId,
-    },
-    status,
-    sender_mailbox_id: mailboxId,
-    next_run_at: nextRunAt ? nextRunAt.toISOString() : null,
-  };
+  name: string;
+  definition: unknown;
+  draft_definition: unknown;
+  next_run_at: string | null;
+  draft_revision: number | null;
+};
 
-  if (workflowId) {
-    const { error } = await supabase.from("workflows").update(payload).eq("id", workflowId);
-    if (error) {
-      return { ok: false as const, message: he.errors.saveFailed, workflowId };
-    }
-    return { ok: true as const, workflowId };
-  }
-
-  const { data, error } = await supabase.from("workflows").insert(payload).select("id").single();
-  if (error || !data) {
-    return { ok: false as const, message: he.errors.saveFailed };
-  }
-  return { ok: true as const, workflowId: data.id };
-}
-
-export async function saveWorkflowDraft({
-  workflowId,
-  jsonText,
-}: {
-  workflowId?: string;
-  jsonText: string;
-}) {
-  const { supabase, user } = await requireUser();
-  const parsed = parseJsonText(jsonText);
-  if (!parsed.success) {
-    return { ok: false as const, message: he.workflows.invalidJson };
-  }
-
-  const mailbox = await getConnectedMailboxForUser(user.id);
-  let status: WorkflowStatus = "draft";
-  let nextRunAt: Date | null = null;
-  if (workflowId) {
-    const { data: existing } = await supabase
-      .from("workflows")
-      .select("status, definition, next_run_at")
-      .eq("id", workflowId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-    if (existing?.status === "active" || existing?.status === "paused") {
-      status = existing.status;
-      const previousSchedule = (existing.definition as { schedule?: unknown } | null)?.schedule;
-      const scheduleChanged =
-        JSON.stringify(previousSchedule) !== JSON.stringify(parsed.data.schedule);
-      if (scheduleChanged) {
-        nextRunAt = computeNextRunAt(parsed.data.schedule);
-      } else {
-        nextRunAt = existing.next_run_at ? new Date(existing.next_run_at) : computeNextRunAt(parsed.data.schedule);
-      }
-    }
-  }
-
-  const saved = await saveWorkflowRecord({
-    supabase,
-    userId: user.id,
-    workflowId,
-    definition: parsed.data,
-    mailboxId: mailbox?.id ?? null,
-    status,
-    nextRunAt: status === "draft" || status === "completed" ? null : nextRunAt,
-  });
-  if (!saved.ok) {
-    return saved;
-  }
-
-  revalidatePath("/workflows");
-  return { ok: true as const, message: he.workflows.draftSaved, workflowId: saved.workflowId };
+async function loadWorkflow(
+  supabase: Awaited<ReturnType<typeof requireUser>>["supabase"],
+  userId: string,
+  workflowId: string,
+) {
+  const { data } = await supabase
+    .from("workflows")
+    .select("status, name, definition, draft_definition, next_run_at, draft_revision")
+    .eq("id", workflowId)
+    .eq("user_id", userId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  return (data as WorkflowRow | null) ?? null;
 }
 
 async function dispatchRequests({
@@ -151,6 +77,50 @@ async function dispatchRequests({
   return created;
 }
 
+export async function saveWorkflowDraft({
+  workflowId,
+  jsonText,
+}: {
+  workflowId?: string;
+  jsonText: string;
+}) {
+  const { supabase, user } = await requireUser();
+  const parsed = parseEditorJson(jsonText);
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  const mailbox = await getConnectedMailboxForUser(user.id);
+  const existing = workflowId ? await loadWorkflow(supabase, user.id, workflowId) : null;
+  if (workflowId && !existing) {
+    return { ok: false as const, message: he.errors.notFound };
+  }
+
+  const payload = draftSaveRowPatch({
+    existing,
+    draft: parsed.draft,
+    mailboxId: mailbox?.id ?? null,
+    userId: user.id,
+  });
+
+  if (workflowId) {
+    const { error } = await supabase.from("workflows").update(payload).eq("id", workflowId);
+    if (error) {
+      return { ok: false as const, message: he.errors.saveFailed, workflowId };
+    }
+    revalidatePath("/workflows");
+    return { ok: true as const, message: he.workflows.draftSaved, workflowId };
+  }
+
+  const { data, error } = await supabase.from("workflows").insert(payload).select("id").single();
+  if (error || !data) {
+    return { ok: false as const, message: he.errors.saveFailed };
+  }
+
+  revalidatePath("/workflows");
+  return { ok: true as const, message: he.workflows.draftSaved, workflowId: data.id };
+}
+
 export async function activateWorkflow({
   workflowId,
   jsonText,
@@ -159,12 +129,22 @@ export async function activateWorkflow({
   jsonText: string;
 }) {
   const { supabase, user } = await requireUser();
-  const parsed = parseJsonText(jsonText);
-  if (!parsed.success) {
-    return { ok: false as const, message: he.workflows.invalidJson };
+  const existing = workflowId ? await loadWorkflow(supabase, user.id, workflowId) : null;
+  if (workflowId && !existing) {
+    return { ok: false as const, message: he.errors.notFound };
   }
 
-  const definition = parsed.data;
+  const allowed = activateGuard(existing?.status);
+  if (!allowed.ok) {
+    return allowed;
+  }
+
+  const parsed = requirePublishedEditorJson(jsonText);
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  const definition = parsed.definition;
   if (!canPublish(definition, { allowDevMinutes: getDevSchedulesEnabled() })) {
     return { ok: false as const, message: he.errors.invalidWorkflow };
   }
@@ -174,29 +154,44 @@ export async function activateWorkflow({
     return { ok: false as const, message: he.errors.gmailRequired };
   }
 
-  const isSendNow = definition.schedule.type === "send_now";
-  const nextRunAt = isSendNow ? null : computeNextRunAt(definition.schedule);
-  if (!isSendNow && !nextRunAt) {
+  const plan = activationPlan(definition);
+  if (plan.missingNextRun) {
     return { ok: false as const, message: he.workflows.onceInPast };
   }
 
-  const saved = await saveWorkflowRecord({
-    supabase,
-    userId: user.id,
-    workflowId,
+  const payload = publishedRowFromEditor({
     definition,
     mailboxId: mailbox.id,
-    status: "active",
-    nextRunAt,
+    status: plan.status,
+    nextRunAt: plan.nextRunAt,
   });
-  if (!saved.ok || !saved.workflowId) {
+
+  let savedId = workflowId;
+  if (workflowId) {
+    const { error } = await supabase.from("workflows").update(payload).eq("id", workflowId);
+    if (error) {
+      return { ok: false as const, message: he.errors.saveFailed };
+    }
+  } else {
+    const { data, error } = await supabase
+      .from("workflows")
+      .insert({ ...payload, user_id: user.id, draft_revision: 1 })
+      .select("id")
+      .single();
+    if (error || !data) {
+      return { ok: false as const, message: he.errors.saveFailed };
+    }
+    savedId = data.id;
+  }
+
+  if (!savedId) {
     return { ok: false as const, message: he.errors.saveFailed };
   }
 
-  if (isSendNow) {
+  if (plan.dispatchNow) {
     try {
       await dispatchRequests({
-        workflowId: saved.workflowId,
+        workflowId: savedId,
         userId: user.id,
         mailboxId: mailbox.id,
         definition,
@@ -206,16 +201,13 @@ export async function activateWorkflow({
     } catch (error) {
       return { ok: false as const, message: mapRequestError(error) };
     }
-    await supabase
-      .from("workflows")
-      .update({ next_run_at: null })
-      .eq("id", saved.workflowId)
-      .eq("user_id", user.id);
-    await supabase
-      .from("workflows")
-      .update({ status: "completed", next_run_at: null })
-      .eq("id", saved.workflowId)
-      .eq("user_id", user.id);
+    if (plan.completeAfterDispatch) {
+      await supabase
+        .from("workflows")
+        .update({ status: "completed", next_run_at: null })
+        .eq("id", savedId)
+        .eq("user_id", user.id);
+    }
     revalidatePath("/requests");
     revalidatePath("/workflows");
     redirect("/requests");
@@ -223,6 +215,63 @@ export async function activateWorkflow({
 
   revalidatePath("/workflows");
   redirect("/workflows");
+}
+
+export async function publishWorkflowChanges({
+  workflowId,
+  jsonText,
+}: {
+  workflowId: string;
+  jsonText: string;
+}) {
+  const { supabase, user } = await requireUser();
+  const existing = await loadWorkflow(supabase, user.id, workflowId);
+  if (!existing) {
+    return { ok: false as const, message: he.errors.notFound };
+  }
+
+  const allowed = publishChangesGuard(existing.status);
+  if (!allowed.ok) {
+    return allowed;
+  }
+
+  const parsed = requirePublishedEditorJson(jsonText);
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  const definition = parsed.definition;
+  if (!canPublish(definition, { allowDevMinutes: getDevSchedulesEnabled() })) {
+    return { ok: false as const, message: he.errors.invalidWorkflow };
+  }
+
+  const mailbox = await getConnectedMailboxForUser(user.id);
+  if (!mailbox) {
+    return { ok: false as const, message: he.errors.gmailRequired };
+  }
+
+  const previousSchedule = (existing.definition as { schedule?: unknown } | null)?.schedule;
+  const plan = publishChangesPlan({
+    status: existing.status,
+    previousSchedule,
+    nextSchedule: definition.schedule,
+    currentNextRunAt: existing.next_run_at,
+  });
+
+  const payload = publishedRowFromEditor({
+    definition,
+    mailboxId: mailbox.id,
+    status: plan.status,
+    nextRunAt: plan.nextRunAt,
+  });
+
+  const { error } = await supabase.from("workflows").update(payload).eq("id", workflowId);
+  if (error) {
+    return { ok: false as const, message: he.errors.saveFailed };
+  }
+
+  revalidatePath("/workflows");
+  return { ok: true as const, message: he.workflows.changesApplied, workflowId };
 }
 
 export async function sendTestWorkflow({
@@ -233,9 +282,9 @@ export async function sendTestWorkflow({
   jsonText: string;
 }) {
   const { supabase, user } = await requireUser();
-  const parsed = parseJsonText(jsonText);
-  if (!parsed.success) {
-    return { ok: false as const, message: he.workflows.invalidJson };
+  const parsed = requirePublishedEditorJson(jsonText);
+  if (!parsed.ok) {
+    return parsed;
   }
 
   const mailbox = await getConnectedMailboxForUser(user.id);
@@ -243,26 +292,43 @@ export async function sendTestWorkflow({
     return { ok: false as const, message: he.errors.gmailRequired };
   }
 
-  const saved = await saveWorkflowRecord({
-    supabase,
-    userId: user.id,
-    workflowId,
-    definition: parsed.data,
+  const existing = workflowId ? await loadWorkflow(supabase, user.id, workflowId) : null;
+  if (workflowId && !existing) {
+    return { ok: false as const, message: he.errors.notFound };
+  }
+
+  const draftPayload = draftSaveRowPatch({
+    existing,
+    draft: parsed.definition,
     mailboxId: mailbox.id,
-    status: "draft",
-    nextRunAt: null,
+    userId: user.id,
   });
-  if (!saved.ok || !saved.workflowId) {
+
+  let savedId = workflowId;
+  if (workflowId) {
+    const { error } = await supabase.from("workflows").update(draftPayload).eq("id", workflowId);
+    if (error) {
+      return { ok: false as const, message: he.errors.saveFailed };
+    }
+  } else {
+    const { data, error } = await supabase.from("workflows").insert(draftPayload).select("id").single();
+    if (error || !data) {
+      return { ok: false as const, message: he.errors.saveFailed };
+    }
+    savedId = data.id;
+  }
+
+  if (!savedId) {
     return { ok: false as const, message: he.errors.saveFailed };
   }
 
   try {
     await dispatchRequests({
-      workflowId: saved.workflowId,
+      workflowId: savedId,
       userId: user.id,
       mailboxId: mailbox.id,
       definition: {
-        ...parsed.data,
+        ...parsed.definition,
         recipients: [{ name: user.email ?? mailbox.email, email: mailbox.email }],
       },
       isTest: true,
@@ -276,7 +342,7 @@ export async function sendTestWorkflow({
   return {
     ok: true as const,
     message: he.workflows.testSent,
-    workflowId: saved.workflowId,
+    workflowId: savedId,
   };
 }
 
@@ -317,8 +383,11 @@ export async function resumeWorkflow(workflowId: string) {
 
   const now = new Date();
   let nextRunAt = data.next_run_at ? new Date(data.next_run_at) : computeNextRunAt(parsed.data.schedule, now);
-  if (!nextRunAt || nextRunAt.getTime() <= now.getTime()) {
+  if (parsed.data.schedule.type !== "manual" && (!nextRunAt || nextRunAt.getTime() <= now.getTime())) {
     nextRunAt = computeNextRunAt(parsed.data.schedule, now);
+  }
+  if (parsed.data.schedule.type === "manual") {
+    nextRunAt = null;
   }
 
   const { error } = await supabase

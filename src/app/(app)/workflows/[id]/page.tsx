@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
-import { requireUser } from "@/lib/auth/require-user";
-import { he } from "@/lib/i18n/he";
-import { WorkflowEditor } from "../new/workflow-editor";
+
+import { loadStudioState } from "@/app/(app)/workflows/studio-load";
+import { WorkflowStudio } from "@/components/workflows/workflow-studio";
 
 export default async function EditWorkflowPage({
   params,
@@ -9,35 +9,14 @@ export default async function EditWorkflowPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { supabase, user } = await requireUser();
-  const [{ data }, mailboxResult] = await Promise.all([
-    supabase
-      .from("workflows")
-      .select("id, definition")
-      .eq("id", id)
-      .eq("user_id", user.id)
-      .is("deleted_at", null)
-      .maybeSingle(),
-    supabase
-      .from("mailboxes")
-      .select("email, status")
-      .eq("user_id", user.id)
-      .eq("status", "connected")
-      .limit(1)
-      .maybeSingle(),
-  ]);
-  const mailbox = mailboxResult.data;
-
-  if (!data) {
+  const initial = await loadStudioState(id);
+  if (!initial) {
     notFound();
   }
 
   return (
-    <WorkflowEditor
-      workflowId={data.id}
-      initialJson={JSON.stringify(data.definition, null, 2)}
-      mailboxEmail={mailbox?.email ?? null}
-      title={he.workflows.editTitle}
-    />
+    <div className="flex min-h-0 flex-1 flex-col">
+      <WorkflowStudio initial={initial} />
+    </div>
   );
 }

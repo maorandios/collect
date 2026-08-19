@@ -29,6 +29,7 @@ function weeklyDefinition(weekday: number): WorkflowDefinition {
     version: 1,
     name: "בדיקת יום",
     senderMailboxId: null,
+    recipientMode: "fixed",
     recipients: [{ name: "רוני", email: "roni@example.com" }],
     schedule: {
       type: "weekly",

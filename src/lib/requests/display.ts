@@ -344,6 +344,9 @@ export function recurrenceLabel(schedule: WorkflowSchedule | null | undefined) {
   if (schedule.type === "weekly" || schedule.type === "monthly") {
     return he.workflow.recurring;
   }
+  if (schedule.type === "manual") {
+    return he.workflow.manual;
+  }
   return he.workflow.once;
 }
 

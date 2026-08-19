@@ -186,3 +186,11 @@ test("preview of next three Monday runs stays on Monday", () => {
   );
   assert.ok(runs.every((run) => jerusalemWeekday(run) === 1));
 });
+
+test("manual has no next run while send_now still resolves to now", () => {
+  const now = new Date("2026-08-18T09:00:00.000Z");
+  assert.equal(computeNextRunAt({ type: "manual" }, now), null);
+  assert.equal(computeUpcomingRuns({ type: "manual" }, now).length, 0);
+  assert.equal(computeFollowingRun({ type: "manual" }, now, now), null);
+  assert.equal(computeNextRunAt({ type: "send_now" }, now)?.toISOString(), now.toISOString());
+});

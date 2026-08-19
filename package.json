@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/lib/schedule/next-run.test.ts src/lib/schedule/reminder.test.ts src/lib/schedule/labels.test.ts src/lib/jobs/keys.test.ts src/lib/i18n/he.test.ts src/lib/requests/display.test.ts"
+    "test": "tsx --test src/lib/schedule/next-run.test.ts src/lib/schedule/reminder.test.ts src/lib/schedule/labels.test.ts src/lib/jobs/keys.test.ts src/lib/i18n/he.test.ts src/lib/requests/display.test.ts src/lib/workflow/schema.test.ts src/lib/workflow/publish.test.ts src/lib/workflow/editor-contract.test.ts src/lib/workflow/compiler-result.test.ts src/lib/workflow/merge.test.ts src/lib/workflow/chat-turn.test.ts src/lib/workflow/studio-display.test.ts src/lib/workflow/assistant-message.test.ts src/lib/workflow/completion.test.ts src/lib/workflow/assistant-copy.test.ts src/lib/workflow/hybrid-editor.test.ts src/lib/workflow/setup-extract.test.ts src/lib/workflow/field-editor.test.ts src/lib/workflow/setup-reducer.test.ts src/lib/workflow/setup-parse.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -21,6 +21,7 @@
     "lucide-react": "^1.31.0",
     "next": "16.3.1",
     "next-themes": "^0.4.6",
+    "openai": "^7.5.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "server-only": "^0.0.1",

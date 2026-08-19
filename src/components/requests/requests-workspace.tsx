@@ -103,7 +103,7 @@ export function RequestsWorkspace({
   }
 
   return (
-    <div className="relative min-h-full overflow-x-hidden">
+    <div className="relative h-full min-h-0 overflow-auto overflow-x-hidden">
       <header className="flex items-center justify-between gap-4 border-b border-border bg-surface px-8 py-5">
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold text-foreground">{he.requests.title}</h1>

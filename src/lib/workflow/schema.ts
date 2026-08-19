@@ -13,12 +13,14 @@ export const WEEKDAY = {
   saturday: 6,
 } as const;
 
-const timezoneSchema = z.literal(TIMEZONE);
+export const timezoneSchema = z.literal(TIMEZONE);
 
-const timeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
-const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+export const timeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+export const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
-const scheduleSchema = z.discriminatedUnion("type", [
+export const recipientModeSchema = z.enum(["fixed", "at_launch"]);
+
+export const scheduleSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("send_now"),
   }),
@@ -40,7 +42,15 @@ const scheduleSchema = z.discriminatedUnion("type", [
     time: timeSchema,
     timezone: timezoneSchema,
   }),
+  z.object({
+    type: z.literal("manual"),
+  }),
 ]);
+
+const recipientSchema = z.object({
+  name: z.string().nullable(),
+  email: z.string().email(),
+});
 
 const fieldBase = {
   id: z.string().min(1),
@@ -68,14 +78,8 @@ export const workflowDefinitionSchema = z.object({
   version: z.literal(1),
   name: z.string().min(1),
   senderMailboxId: z.string().uuid().nullable(),
-  recipients: z
-    .array(
-      z.object({
-        name: z.string().nullable(),
-        email: z.string().email(),
-      }),
-    )
-    .min(1),
+  recipientMode: recipientModeSchema.default("fixed"),
+  recipients: z.array(recipientSchema).default([]),
   schedule: scheduleSchema,
   email: z.object({
     subject: z.string().min(1),
@@ -89,9 +93,10 @@ export const workflowDefinitionSchema = z.object({
   }),
 });
 
-export type WorkflowDefinition = z.infer<typeof workflowDefinitionSchema>;
+export type WorkflowDefinition = z.output<typeof workflowDefinitionSchema>;
 export type WorkflowField = z.infer<typeof workflowFieldSchema>;
 export type WorkflowSchedule = z.infer<typeof scheduleSchema>;
+export type RecipientMode = z.infer<typeof recipientModeSchema>;
 
 export function parseWorkflowDefinition(input: unknown) {
   return workflowDefinitionSchema.safeParse(input);

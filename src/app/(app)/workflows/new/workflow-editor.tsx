@@ -4,23 +4,31 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
-import { saveWorkflowDraft, activateWorkflow, sendTestWorkflow } from "@/app/(app)/workflows/actions";
+import {
+  saveWorkflowDraft,
+  activateWorkflow,
+  publishWorkflowChanges,
+  sendTestWorkflow,
+} from "@/app/(app)/workflows/actions";
 import { Button } from "@/components/ui/button";
 import { JsonEditor } from "@/components/workflows/json-editor";
 import { PreviewPanel } from "@/components/workflows/preview-panel";
 import { he } from "@/lib/i18n/he";
 import { roniExampleWorkflow } from "@/lib/workflow/example";
+import { publishActionForStatus, type WorkflowStatus } from "@/lib/workflow/lifecycle";
 import { parseWorkflowDefinition, type WorkflowDefinition } from "@/lib/workflow/schema";
 
 export function WorkflowEditor({
   workflowId,
   initialJson,
   mailboxEmail,
+  status = "draft",
   title = he.workflows.newTitle,
 }: {
   workflowId?: string;
   initialJson?: string;
   mailboxEmail?: string | null;
+  status?: WorkflowStatus;
   title?: string;
 }) {
   const router = useRouter();
@@ -29,6 +37,7 @@ export function WorkflowEditor({
     initialJson ?? JSON.stringify(roniExampleWorkflow, null, 2),
   );
   const [pending, setPending] = useState(false);
+  const publishAction = publishActionForStatus(status);
 
   const parsed = useMemo(() => {
     try {
@@ -39,9 +48,7 @@ export function WorkflowEditor({
   }, [jsonText]);
 
   const definition: WorkflowDefinition | null = parsed.success ? parsed.data : null;
-  const issues = parsed.success
-    ? []
-    : [he.workflows.invalidJson];
+  const issues = parsed.success ? [] : [he.workflows.invalidJson];
 
   async function onSaveDraft() {
     setPending(true);
@@ -83,9 +90,32 @@ export function WorkflowEditor({
     }
   }
 
-  async function onActivate() {
+  async function onPublish() {
+    if (!id && publishAction !== "activate") {
+      return;
+    }
     setPending(true);
     try {
+      if (publishAction === "publishChanges") {
+        if (!id) {
+          toast.error(he.errors.notFound);
+          return;
+        }
+        const result = await publishWorkflowChanges({ workflowId: id, jsonText });
+        if (result.ok) {
+          toast.success(result.message);
+          router.refresh();
+        } else {
+          toast.error(result.message);
+        }
+        return;
+      }
+
+      if (publishAction !== "activate") {
+        toast.error(he.errors.cannotChangeCompleted);
+        return;
+      }
+
       const result = await activateWorkflow({ workflowId: id, jsonText });
       if (result.ok) {
         toast.success(result.message);
@@ -124,9 +154,11 @@ export function WorkflowEditor({
           <Button type="button" variant="outline" className="h-10" disabled={pending} onClick={onSendTest}>
             {pending ? he.workflows.sendingTest : he.actions.sendTest}
           </Button>
-          <Button type="button" className="h-10" disabled={pending} onClick={onActivate}>
-            {he.actions.publish}
-          </Button>
+          {publishAction === "none" ? null : (
+            <Button type="button" className="h-10" disabled={pending} onClick={onPublish}>
+              {publishAction === "publishChanges" ? he.actions.applyChanges : he.actions.publish}
+            </Button>
+          )}
         </div>
       </section>
       <section className="min-h-0 bg-background p-6">

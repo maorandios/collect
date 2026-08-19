@@ -4,6 +4,7 @@ export const roniExampleWorkflow: WorkflowDefinition = {
   version: 1,
   name: "סיכום חודשי",
   senderMailboxId: null,
+  recipientMode: "fixed",
   recipients: [
     {
       name: "רוני",

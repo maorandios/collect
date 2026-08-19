@@ -28,6 +28,9 @@ export function scheduleTypeLabel(schedule: WorkflowSchedule) {
   if (schedule.type === "weekly") {
     return he.workflow.weekly;
   }
+  if (schedule.type === "manual") {
+    return he.workflow.manual;
+  }
   return he.workflow.monthly;
 }
 
@@ -41,6 +44,9 @@ export function scheduleLabel(definition: WorkflowDefinition) {
   }
   if (schedule.type === "weekly") {
     return `${he.workflow.weekly} · ${weekdayLabel(schedule.weekday)} · ${schedule.time}`;
+  }
+  if (schedule.type === "manual") {
+    return he.workflow.manual;
   }
   return `${he.workflow.monthly} · ${schedule.day} · ${schedule.time}`;
 }

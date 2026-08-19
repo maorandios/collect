@@ -34,7 +34,7 @@ export default async function RequestDetailPage({
   const item = mapRequestRow(requestRow);
 
   return (
-    <div className="min-h-full">
+    <div className="h-full min-h-0 overflow-auto">
       <header className="flex items-center justify-between gap-4 border-b border-border bg-surface px-8 py-5">
         <Link href="/requests" className={cn(buttonVariants({ variant: "outline" }), "h-10 rounded-[12px] px-3")}>
           {he.actions.back}

@@ -82,7 +82,7 @@ function firstMonthlyOnOrAfter(schedule: Extract<WorkflowSchedule, { type: "mont
 }
 
 export function advanceOne(schedule: WorkflowSchedule, from: Date) {
-  if (schedule.type === "send_now" || schedule.type === "once") {
+  if (schedule.type === "send_now" || schedule.type === "once" || schedule.type === "manual") {
     return null;
   }
 
@@ -102,7 +102,7 @@ export function computeUpcomingRuns(
   now = new Date(),
   count = 3,
 ) {
-  if (schedule.type === "send_now") {
+  if (schedule.type === "send_now" || schedule.type === "manual") {
     return [] as Date[];
   }
 
@@ -136,6 +136,9 @@ export function computeNextRunAt(schedule: WorkflowSchedule, now = new Date()) {
   if (schedule.type === "send_now") {
     return now;
   }
+  if (schedule.type === "manual") {
+    return null;
+  }
   return computeUpcomingRuns(schedule, now, 1)[0] ?? null;
 }
 
@@ -144,7 +147,7 @@ export function computeFollowingRun(
   scheduledFor: Date,
   now = new Date(),
 ) {
-  if (schedule.type === "send_now" || schedule.type === "once") {
+  if (schedule.type === "send_now" || schedule.type === "once" || schedule.type === "manual") {
     return null;
   }
 

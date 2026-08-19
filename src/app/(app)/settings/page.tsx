@@ -31,7 +31,7 @@ export default async function SettingsPage({
       : "disconnected";
 
   return (
-    <div className="flex h-full min-h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col overflow-auto">
       <PageHeader title={he.settings.title} />
       <section className="grid flex-1 grid-cols-1 gap-6 p-8 xl:grid-cols-2">
         <SettingsForm

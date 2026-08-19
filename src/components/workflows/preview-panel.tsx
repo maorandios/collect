@@ -36,12 +36,16 @@ export function PreviewPanel({
       </section>
       <section className="space-y-1 text-sm">
         <p className="text-muted-foreground">{he.workflow.recipients}</p>
-        {definition.recipients.map((recipient) => (
-          <p key={recipient.email}>
-            {recipient.name ? `${recipient.name} · ` : ""}
-            {recipient.email}
-          </p>
-        ))}
+        {definition.recipients.length > 0
+          ? definition.recipients.map((recipient) => (
+              <p key={recipient.email}>
+                {recipient.name ? `${recipient.name} · ` : ""}
+                {recipient.email}
+              </p>
+            ))
+          : definition.recipientMode === "at_launch"
+            ? <p>{he.workflow.atLaunch}</p>
+            : null}
       </section>
       <section className="space-y-1 text-sm">
         <p className="text-muted-foreground">{he.workflow.schedule}</p>

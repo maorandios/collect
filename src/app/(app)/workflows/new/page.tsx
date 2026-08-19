@@ -1,15 +1,11 @@
-import { requireUser } from "@/lib/auth/require-user";
-import { WorkflowEditor } from "./workflow-editor";
+import { loadEmptyStudioState } from "@/app/(app)/workflows/studio-load";
+import { WorkflowStudio } from "@/components/workflows/workflow-studio";
 
 export default async function NewWorkflowPage() {
-  const { supabase, user } = await requireUser();
-  const { data: mailbox } = await supabase
-    .from("mailboxes")
-    .select("email, status")
-    .eq("user_id", user.id)
-    .eq("status", "connected")
-    .limit(1)
-    .maybeSingle();
-
-  return <WorkflowEditor mailboxEmail={mailbox?.email ?? null} />;
+  const initial = await loadEmptyStudioState();
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <WorkflowStudio initial={initial} />
+    </div>
+  );
 }

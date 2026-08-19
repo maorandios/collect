@@ -53,7 +53,7 @@ async function processClaimedWorkflow(
   const parsed = parseWorkflowDefinition(workflow.definition);
   const scheduledFor = workflow.next_run_at ? new Date(workflow.next_run_at) : null;
 
-  if (!parsed.success || !scheduledFor || parsed.data.schedule.type === "send_now") {
+  if (!parsed.success || !scheduledFor || parsed.data.schedule.type === "send_now" || parsed.data.schedule.type === "manual") {
     await admin
       .from("workflows")
       .update({

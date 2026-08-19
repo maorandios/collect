@@ -27,7 +27,7 @@ export default async function WorkflowsPage() {
   const [{ data: workflows }, { data: requestRows }] = await Promise.all([
     supabase
       .from("workflows")
-      .select("id, name, status, next_run_at, definition, updated_at, deleted_at")
+      .select("id, name, status, next_run_at, definition, draft_definition, updated_at, deleted_at")
       .eq("user_id", user.id)
       .is("deleted_at", null)
       .order("created_at", { ascending: false }),
@@ -57,7 +57,7 @@ export default async function WorkflowsPage() {
   );
 
   return (
-    <div className="flex h-full min-h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col overflow-auto">
       <PageHeader title={he.workflows.title} actions={createAction} />
       <section className="flex-1 p-8">
         {!workflows?.length ? (
@@ -82,7 +82,7 @@ export default async function WorkflowsPage() {
               </TableHeader>
               <TableBody>
                 {workflows.map((workflow) => {
-                  const parsed = parseWorkflowDefinition(workflow.definition);
+                  const parsed = parseWorkflowDefinition(workflow.definition ?? workflow.draft_definition);
                   const schedule = parsed.success
                     ? scheduleTypeLabel(parsed.data.schedule)
                     : "—";

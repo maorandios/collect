@@ -1,20 +1,29 @@
 import { he } from "@/lib/i18n/he";
 import { emptyWorkflowDraft, type WorkflowDraftDefinition } from "@/lib/workflow/draft-schema";
-import { resolveEmailSubject } from "@/lib/workflow/email-subject";
 import { TIMEZONE } from "@/lib/workflow/schema";
+import {
+  cloneDraft,
+  conversationModeOf,
+  emptySetupState,
+  type SetupQuestion,
+  type SetupRequirement,
+  type WorkflowSetupState,
+} from "@/lib/workflow/setup-state";
 import type { SetupChangePatch, SetupExtraction } from "@/lib/workflow/setup-extraction";
-import { extractSetupFacts } from "@/lib/workflow/setup-extract";
+import { extractSetupFacts, companyNameFromOriginal, refineRequirementKind } from "@/lib/workflow/setup-extract";
+import { syncProposalEmail } from "@/lib/workflow/setup-email";
 import { advanceSetup } from "@/lib/workflow/setup-flow";
+import { classifyPointEdit, pointEditAck, stayInEdit, stayInReview } from "@/lib/workflow/point-edit";
 import { buildSetupAssistantMessage } from "@/lib/workflow/setup-copy";
 import {
   answerLooksParsed,
   extractDate,
   extractMonthDay,
-  extractPersonName,
   extractTime,
   extractWeekday,
+  parseMonthlyDayMode,
   parseTriggerType,
-  suggestEmailTypo,
+  validateEmail,
 } from "@/lib/workflow/setup-parse";
 import {
   applyReviewPatch,
@@ -30,12 +39,12 @@ import {
   validateProposalSemantics,
 } from "@/lib/workflow/setup-validate";
 import {
-  cloneDraft,
-  emptySetupState,
-  type SetupQuestion,
-  type SetupRequirement,
-  type WorkflowSetupState,
-} from "@/lib/workflow/setup-state";
+  contactPersonFromExtraction,
+  isCompanyDerivedContact,
+  statusFromIdentity,
+  syncProposalWithIdentity,
+  type RecipientIdentity,
+} from "@/lib/workflow/setup-identity";
 
 function enforceFieldsInvariant(
   previous: WorkflowSetupState,
@@ -52,6 +61,12 @@ function enforceFieldsInvariant(
     question: SetupQuestion | null;
   },
 ) {
+  if (conversationModeOf(previous) === "edit" || conversationModeOf(next) === "edit") {
+    return next;
+  }
+  if ((conversationModeOf(previous) === "review" || conversationModeOf(next) === "review") && fieldsTouched) {
+    return next;
+  }
   const currentStep =
     firstTurn || extraction
       ? "requirements"
@@ -97,8 +112,9 @@ function mergeRequirements(
 }
 
 function applyScheduleFromMessage(proposal: WorkflowDraftDefinition, message: string, extraction: SetupExtraction | null) {
+  const parsed = parseTriggerType(message);
   const mentioned =
-    Boolean(parseTriggerType(message)) ||
+    Boolean(parsed) ||
     extractWeekday(message) != null ||
     extractTime(message) != null ||
     extractMonthDay(message, null) != null ||
@@ -106,18 +122,20 @@ function applyScheduleFromMessage(proposal: WorkflowDraftDefinition, message: st
   if (!mentioned) {
     return proposal;
   }
-  const type = extraction && extraction.scheduleType !== "none" ? extraction.scheduleType : parseTriggerType(message);
+  const type = parsed ?? (extraction && extraction.scheduleType !== "none" ? extraction.scheduleType : null);
   if (!type) {
     return proposal;
   }
   if (type === "monthly") {
+    const day = extraction?.scheduleDay ?? extractMonthDay(message, null);
     return {
       ...proposal,
       schedule: {
         type: "monthly" as const,
-        day: extraction?.scheduleDay ?? extractMonthDay(message, null),
+        day,
         time: extraction?.scheduleTime ?? extractTime(message),
         timezone: TIMEZONE,
+        ...(day != null ? { monthlyDayMode: parseMonthlyDayMode(message) } : {}),
       },
     };
   }
@@ -151,55 +169,51 @@ function applyScheduleFromMessage(proposal: WorkflowDraftDefinition, message: st
 
 function applyRecipientFromFacts(
   proposal: WorkflowDraftDefinition,
+  currentIdentity: RecipientIdentity,
   extraction: SetupExtraction | null,
   companyName: string | null,
-  personName: string | null,
+  userMessage: string,
   email: string | null,
 ) {
-  const extractedName = extraction?.recipientName?.trim() ?? "";
-  const safeExtracted =
-    extractedName && extractedName !== "נהל" && extractedName !== "מנהל" ? extractedName : "";
-  const name = safeExtracted || personName || companyName || proposal.recipients[0]?.name || "";
-  const nextEmail = extraction?.recipientEmail?.trim() || email || proposal.recipients[0]?.email || "";
-  if (!name && !nextEmail) {
-    return proposal;
+  const organizationName =
+    companyName?.trim() || currentIdentity.organizationName?.trim() || proposal.recipients[0]?.organizationName?.trim() || null;
+  const person = contactPersonFromExtraction(userMessage, extraction?.contactPerson, organizationName);
+  const extractedName = extraction?.recipientName?.trim() || "";
+  const named =
+    person ??
+    (extractedName &&
+    person === null &&
+    contactPersonFromExtraction(userMessage, { value: extractedName, evidence: extractedName }, organizationName)
+      ? { value: extractedName, evidence: extractedName }
+      : null);
+  let contactResolution = currentIdentity.contactResolution;
+  let contactName = currentIdentity.contactName;
+  if (named && !isCompanyDerivedContact(named.value, organizationName)) {
+    contactName = named.value;
+    contactResolution = "named";
+  } else if (contactResolution === "named" && isCompanyDerivedContact(contactName, organizationName)) {
+    contactName = null;
+    contactResolution = "pending";
   }
-  return {
-    ...proposal,
-    recipientMode: "fixed" as const,
-    recipients: [{ name, email: nextEmail }],
+  const nextEmail = extraction?.recipientEmail?.trim() || email || currentIdentity.email || proposal.recipients[0]?.email || null;
+  const identity: RecipientIdentity = {
+    organizationName,
+    contactName: contactResolution === "named" ? contactName : null,
+    contactResolution,
+    email: nextEmail,
   };
+  return { proposal: syncProposalWithIdentity(proposal, identity), identity };
 }
 
-export function ensureEmailCopy(
-  proposal: WorkflowDraftDefinition,
-  userMessage: string,
-  extraction: SetupExtraction | null,
-) {
-  const labels = proposal.fields.map((field) => field.label);
-  const subject =
-    extraction?.emailSubject?.trim() ||
-    proposal.email.subject.trim() ||
-    resolveEmailSubject({
-      incoming: labels.length ? `בקשה ל${labels[0]}` : "",
-      current: "",
-      recipientNames: proposal.recipients.map((item) => item.name),
-      userMessage,
-      locked: false,
-    });
-  const body =
-    extraction?.emailBody?.trim() ||
-    proposal.email.body.trim() ||
-    (labels.length ? `שלום,\nנא לצרף את ${labels.join(" ואת ")}.\nתודה.` : "");
-  const name = extraction?.name?.trim() || proposal.name.trim() || (labels.length ? `איסוף ${labels[0]}` : "");
-  return {
-    ...proposal,
-    name,
-    email: { subject, body },
-  };
+export function ensureEmailCopy(proposal: WorkflowDraftDefinition) {
+  return syncProposalEmail(proposal);
 }
 
 export function needsSetupAi(setup: WorkflowSetupState): "extract" | "change" | null {
+  const mode = conversationModeOf(setup);
+  if (mode === "edit" || mode === "review") {
+    return null;
+  }
   const firstTurn = setup.requirements.length === 0 && setup.proposal.fields.length === 0;
   if (firstTurn || setup.nextQuestion?.key === "requirements") {
     return "extract";
@@ -247,42 +261,68 @@ export function applySetupExtraction({
       kind: item.kind,
       filePreset: item.filePreset ?? undefined,
     }))
-    .filter((item) => !isNonBusinessFieldLabel(item.label));
-  const heuristicItems = facts.items.filter((item) => !isNonBusinessFieldLabel(item.label));
-  const incoming = [
-    ...extractedItems,
-    ...heuristicItems.filter(
-      (item) => !extractedItems.some((existing) => labelsOverlap(existing.label, item.label)),
-    ),
-  ];
+    .filter((item) => !isNonBusinessFieldLabel(item.label))
+    .map((item) => refineRequirementKind(item));
+  const heuristicItems = facts.items
+    .filter((item) => !isNonBusinessFieldLabel(item.label))
+    .map((item) => refineRequirementKind(item));
+  const lumpedHeuristic =
+    heuristicItems.length === 1 &&
+    extractedItems.filter((item) => labelsOverlap(heuristicItems[0]?.label ?? "", item.label)).length >= 2;
+  const incoming =
+    firstTurn && heuristicItems.length > 0 && !lumpedHeuristic
+      ? [
+          ...heuristicItems.map((item) => {
+            const fromAi = extractedItems.find((existing) => labelsOverlap(existing.label, item.label));
+            return fromAi && item.kind === "ambiguous" ? item : (fromAi ?? item);
+          }),
+          ...extractedItems.filter((item) => !heuristicItems.some((existing) => labelsOverlap(existing.label, item.label))),
+        ]
+      : [
+          ...extractedItems,
+          ...heuristicItems.filter((item) => !extractedItems.some((existing) => labelsOverlap(existing.label, item.label))),
+        ];
   const requirements = mergeRequirements(current.requirements, incoming, createId, firstTurn);
   let proposal: WorkflowDraftDefinition = {
     ...current.proposal,
     fields: rebuildFields(requirements, current.proposal.fields, createId),
   };
-  proposal = applyRecipientFromFacts(
+  const appliedRecipient = applyRecipientFromFacts(
     proposal,
+    current.recipientIdentity,
     extraction,
-    extraction?.companyName ?? facts.companyName,
-    extractPersonName(userMessage),
+    companyNameFromOriginal(userMessage, extraction?.companyName ?? facts.companyName),
+    userMessage,
     facts.emails[0] ?? null,
   );
+  proposal = appliedRecipient.proposal;
+  const identity = appliedRecipient.identity;
   proposal = applyScheduleFromMessage(proposal, userMessage, extraction);
-  proposal = ensureEmailCopy(proposal, userMessage, extraction);
+  proposal = ensureEmailCopy(proposal);
   proposal = sanitizeProposalFields(proposal);
-  const email = proposal.recipients[0]?.email?.trim() ?? "";
-  const typo = email ? suggestEmailTypo(email) : null;
-  if (typo) {
-    proposal = {
-      ...proposal,
-      recipients: proposal.recipients.map((item, index) => (index === 0 ? { ...item, email: "" } : item)),
-    };
+  const email = identity.email?.trim() ?? "";
+  const checked = email ? validateEmail(email) : null;
+  const pendingCorrection =
+    checked && !checked.valid && checked.suggestion
+      ? {
+          original: email,
+          suggested: checked.suggestion,
+          reason: checked.reason,
+          domain: email.includes("@") ? email.slice(email.lastIndexOf("@") + 1) : "",
+          suggestedDomain: checked.suggestion.slice(checked.suggestion.lastIndexOf("@") + 1),
+        }
+      : null;
+  if (pendingCorrection || (checked && !checked.valid)) {
+    identity.email = null;
+    proposal = syncProposalWithIdentity(proposal, identity);
   }
   const next = advanceSetup({
     ...current,
     requirements,
     proposal,
-    pendingEmailCorrection: typo,
+    pendingEmailCorrection: pendingCorrection,
+    recipientIdentity: identity,
+    contactPersonStatus: statusFromIdentity(identity),
     updatedAt: new Date().toISOString(),
   });
   if (next.status === "review" && !validateProposalSemantics(next.proposal).ok) {
@@ -302,6 +342,8 @@ export function applySetupExtraction({
       nextStatus: next.status,
       userMessage,
       firstTurn,
+      organizationName: next.proposal.recipients[0]?.organizationName ?? null,
+      proposal: next.proposal,
     }),
     invalid: false as const,
   };
@@ -322,7 +364,71 @@ export function applySetupUserTurn({
   createId?: () => string;
 }) {
   const previousQuestion = current.nextQuestion;
-  const firstTurn = current.requirements.length === 0 && current.proposal.fields.length === 0;
+  const mode = conversationModeOf(current);
+  const firstTurn = current.requirements.length === 0 && current.proposal.fields.length === 0 && mode === "setup";
+
+  if (mode === "review" || mode === "edit") {
+    if (mode === "review" && (userMessage.trim() === he.studio.setup.buildProcess || userMessage.trim() === he.studio.setup.applyChanges)) {
+      return { setup: current, assistantMessage: he.studio.setup.reviewPrompt, action: "apply" as const, invalid: false };
+    }
+    if (mode === "review" && userMessage.trim() === he.studio.setup.changeDetails) {
+      const next = {
+        ...stayInReview(current),
+        nextQuestion: {
+          key: "change" as const,
+          step: "review" as const,
+          question: he.studio.setup.askChange,
+          answerType: "text" as const,
+        },
+      };
+      return { setup: next, assistantMessage: he.studio.setup.askChange, invalid: false };
+    }
+    const classified = changePatch
+      ? ({ kind: "complete" as const, patch: changePatch })
+      : classifyPointEdit(userMessage, current);
+    if (classified.kind === "clarify") {
+      return {
+        setup: {
+          ...current,
+          conversationMode: mode,
+          pendingEdit: { target: classified.target, partialPatch: classified.patch },
+          nextQuestion: classified.question,
+          updatedAt: new Date().toISOString(),
+        },
+        assistantMessage: classified.question.question,
+        invalid: false as const,
+        appliedPatch: classified.patch,
+      };
+    }
+    if (classified.kind === "unknown") {
+      return {
+        setup: current,
+        assistantMessage: he.studio.setup.didNotUnderstandChange,
+        invalid: true as const,
+        needsAi: true,
+      };
+    }
+    const patched = applyReviewPatch(current, classified.patch, createId);
+    if (!patched) {
+      return { setup: current, assistantMessage: he.studio.setup.didNotUnderstandChange, invalid: true as const, needsAi: true };
+    }
+    const next = mode === "edit" ? stayInEdit(patched) : stayInReview(patched);
+    const guarded = enforceFieldsInvariant(current, next, {
+      firstTurn: false,
+      extraction: false,
+      fieldsTouched: classified.patch.target.startsWith("field_"),
+      question: previousQuestion,
+    });
+    if (!guarded) {
+      return { setup: current, assistantMessage: he.studio.setup.fieldsInvariant, invalid: true as const };
+    }
+    return {
+      setup: guarded,
+      assistantMessage: pointEditAck(classified.patch, guarded.proposal),
+      invalid: false as const,
+      appliedPatch: classified.patch,
+    };
+  }
 
   if (changePatch) {
     const patched = applyReviewPatch(current, changePatch, createId);
@@ -353,6 +459,7 @@ export function applySetupUserTurn({
         userMessage,
         firstTurn: false,
         changeTarget: changePatch.target,
+        proposal: guarded.proposal,
       }),
       invalid: false,
     };
@@ -374,7 +481,7 @@ export function applySetupUserTurn({
         setup: current,
         assistantMessage: reduced.message,
         invalid: true,
-        needsAi: true,
+        needsAi: reduced.needsAi ?? true,
         action: undefined,
       };
     }
@@ -409,6 +516,7 @@ export function applySetupUserTurn({
         userMessage,
         firstTurn: false,
         changeTarget,
+        proposal: guarded.proposal,
       }),
       action: reduced.action,
       invalid: false,

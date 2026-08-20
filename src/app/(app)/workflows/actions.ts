@@ -19,6 +19,8 @@ import {
   publishChangesGuard,
   requirePublishedEditorJson,
 } from "@/lib/workflow/editor-contract";
+import { unconfiguredFieldsMessage } from "@/lib/workflow/draft-fields";
+import { parseWorkflowDraft } from "@/lib/workflow/draft-schema";
 import { activationPlan, publishChangesPlan, type WorkflowStatus } from "@/lib/workflow/lifecycle";
 import { canPublish } from "@/lib/workflow/publish";
 import { parseWorkflowDefinition, type WorkflowDefinition } from "@/lib/workflow/schema";
@@ -139,6 +141,19 @@ export async function activateWorkflow({
     return allowed;
   }
 
+  try {
+    const raw = JSON.parse(jsonText) as unknown;
+    const draft = parseWorkflowDraft(raw);
+    if (draft.success) {
+      const unconfigured = unconfiguredFieldsMessage(draft.data.fields);
+      if (unconfigured) {
+        return { ok: false as const, message: unconfigured };
+      }
+    }
+  } catch {
+    return { ok: false as const, message: he.workflows.invalidJson };
+  }
+
   const parsed = requirePublishedEditorJson(jsonText);
   if (!parsed.ok) {
     return parsed;
@@ -233,6 +248,19 @@ export async function publishWorkflowChanges({
   const allowed = publishChangesGuard(existing.status);
   if (!allowed.ok) {
     return allowed;
+  }
+
+  try {
+    const raw = JSON.parse(jsonText) as unknown;
+    const draft = parseWorkflowDraft(raw);
+    if (draft.success) {
+      const unconfigured = unconfiguredFieldsMessage(draft.data.fields);
+      if (unconfigured) {
+        return { ok: false as const, message: unconfigured };
+      }
+    }
+  } catch {
+    return { ok: false as const, message: he.workflows.invalidJson };
   }
 
   const parsed = requirePublishedEditorJson(jsonText);

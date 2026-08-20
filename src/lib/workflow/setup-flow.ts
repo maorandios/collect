@@ -1,5 +1,7 @@
 import { he } from "@/lib/i18n/he";
 import type { DraftSchedule, WorkflowDraftDefinition } from "@/lib/workflow/draft-schema";
+import { syncProposalEmail } from "@/lib/workflow/setup-email";
+import { assertContactNotSkipped } from "@/lib/workflow/setup-identity";
 import type { SetupQuestion, SetupStep, WorkflowSetupState } from "@/lib/workflow/setup-state";
 
 const TRIGGER_OPTIONS = [
@@ -16,12 +18,6 @@ const REMINDER_OPTIONS = [
   { value: "none", label: he.workflow.reminderOff },
 ];
 
-const FIELD_TYPE_OPTIONS = [
-  { value: "file", label: he.studio.setup.fieldTypeFile },
-  { value: "confirmation", label: he.studio.setup.fieldTypeConfirmation },
-  { value: "text", label: he.studio.setup.fieldTypeText },
-];
-
 const WEEKDAY_OPTIONS = [
   { value: "0", label: he.studio.setup.weekdaySunday },
   { value: "1", label: he.studio.setup.weekdayMonday },
@@ -30,6 +26,15 @@ const WEEKDAY_OPTIONS = [
   { value: "4", label: he.studio.setup.weekdayThursday },
   { value: "5", label: he.studio.setup.weekdayFriday },
   { value: "6", label: he.studio.setup.weekdaySaturday },
+];
+
+const MONTH_DAY_OPTIONS = [
+  { value: "1", label: he.studio.setup.monthDayQuick1 },
+  { value: "10", label: he.studio.setup.monthDayQuick10 },
+  { value: "15", label: he.studio.setup.monthDayQuick15 },
+  { value: "20", label: he.studio.setup.monthDayQuick20 },
+  { value: "25", label: he.studio.setup.monthDayQuick25 },
+  { value: "31", label: he.studio.setup.monthDayEnd },
 ];
 
 function scheduleTime(schedule: DraftSchedule | undefined) {
@@ -93,6 +98,7 @@ function nextScheduleQuestion(schedule: DraftSchedule): SetupQuestion | null {
         step: "schedule_details",
         question: he.studio.setup.askMonthDay,
         answerType: "text",
+        options: MONTH_DAY_OPTIONS,
       };
     }
     if (!scheduleTime(schedule)) {
@@ -109,20 +115,19 @@ function nextScheduleQuestion(schedule: DraftSchedule): SetupQuestion | null {
 }
 
 export function nextSetupQuestion(
-  state: Pick<WorkflowSetupState, "proposal" | "requirements" | "reminderDecision" | "pendingEmailCorrection">,
+  state: Pick<
+    WorkflowSetupState,
+    | "proposal"
+    | "requirements"
+    | "reminderDecision"
+    | "pendingEmailCorrection"
+    | "contactPersonStatus"
+    | "recipientIdentity"
+    | "pendingCompanyConfirm"
+    | "pendingWeekdayOrMonthDay"
+    | "awaitingCompanyName"
+  >,
 ): SetupQuestion | null {
-  const ambiguous = state.requirements.find((item) => item.kind === "ambiguous");
-  if (ambiguous) {
-    return {
-      key: `field_type:${ambiguous.id}`,
-      step: "field_types",
-      question: he.studio.setup.askFieldType.replace("{label}", ambiguous.label),
-      answerType: "single_choice",
-      options: FIELD_TYPE_OPTIONS,
-      requirementId: ambiguous.id,
-    };
-  }
-
   if (state.proposal.fields.length === 0 && state.requirements.length === 0) {
     return {
       key: "requirements",
@@ -132,30 +137,81 @@ export function nextSetupQuestion(
     };
   }
 
-  if (state.pendingEmailCorrection) {
+  if (state.awaitingCompanyName) {
     return {
-      key: "email_typo",
+      key: "company_name",
       step: "recipient",
-      question: he.studio.setup.emailTypoAsk
-        .replace("{domain}", state.pendingEmailCorrection.domain)
-        .replace("{suggested}", state.pendingEmailCorrection.suggestedDomain),
+      question: he.studio.setup.askCompanyName,
+      answerType: "text",
+    };
+  }
+
+  if (state.pendingCompanyConfirm) {
+    return {
+      key: "company_confirm",
+      step: "recipient",
+      question: he.studio.setup.confirmCompany.replace("{company}", state.pendingCompanyConfirm),
       answerType: "single_choice",
       options: [
-        { value: "yes", label: he.studio.setup.emailTypoYes },
-        { value: "no", label: he.studio.setup.emailTypoNo },
+        { value: "yes", label: he.studio.setup.confirmCompanyYes },
+        { value: "change", label: he.studio.setup.confirmCompanyChange },
       ],
     };
   }
 
-  if (!hasRecipient(state.proposal)) {
-    const named = state.proposal.recipients.find((item) => item.name?.trim() && !item.email?.trim());
+  if (state.pendingEmailCorrection) {
+    const pending = state.pendingEmailCorrection;
+    const suggested = pending.suggested || pending.suggestedDomain;
+    const question =
+      pending.reason === "comma_in_domain" && suggested
+        ? he.studio.setup.emailCommaInDomain.replace("{email}", suggested)
+        : pending.reason === "common_domain_typo" && suggested
+          ? he.studio.setup.emailCommonTypo.replace("{email}", suggested)
+          : he.studio.setup.emailTypoAsk
+              .replace("{domain}", pending.domain ?? "")
+              .replace("{suggested}", suggested ?? "");
     return {
-      key: named ? "recipient_email" : "recipient",
+      key: "email_typo",
       step: "recipient",
-      question: named
-        ? he.studio.setup.askRecipientEmail.replace("{name}", named.name?.trim() ?? "")
-        : he.studio.setup.askRecipient,
-      answerType: named ? "email" : "text",
+      question,
+      answerType: "single_choice",
+      options: [
+        { value: "yes", label: he.studio.setup.emailTypoYes },
+        {
+          value: "rewrite",
+          label:
+            pending.reason === "common_domain_typo"
+              ? he.studio.setup.emailTypoRewriteNo
+              : he.studio.setup.emailTypoRewrite,
+        },
+      ],
+    };
+  }
+
+  const identity = state.recipientIdentity;
+  const organization = identity.organizationName?.trim() || state.proposal.recipients[0]?.organizationName?.trim() || "";
+  const contactName = identity.contactResolution === "named" ? identity.contactName?.trim() || "" : "";
+  const contactResolved = identity.contactResolution !== "pending";
+
+  if (!contactResolved) {
+    return {
+      key: "contact_name",
+      step: "recipient",
+      question: organization
+        ? he.studio.setup.askContactPerson
+        : he.studio.setup.askContactPersonGeneric,
+      answerType: "text",
+      options: [{ value: "none", label: he.studio.setup.noFixedContact }],
+    };
+  }
+
+  if (!hasRecipient(state.proposal)) {
+    return {
+      key: contactName || organization ? "recipient_email" : "recipient",
+      step: "recipient",
+      question:
+        contactName || organization ? he.studio.setup.askRecipientEmail : he.studio.setup.askRecipient,
+      answerType: contactName || organization ? "email" : "text",
     };
   }
 
@@ -166,6 +222,28 @@ export function nextSetupQuestion(
       question: he.studio.setup.askTrigger,
       answerType: "single_choice",
       options: TRIGGER_OPTIONS,
+    };
+  }
+
+  if (state.pendingWeekdayOrMonthDay) {
+    const pending = state.pendingWeekdayOrMonthDay;
+    return {
+      key: "weekday_or_month_day",
+      step: "schedule_details",
+      question: he.studio.setup.askWeekdayOrMonthDay
+        .replace("{weekday}", pending.weekdayLabel)
+        .replace("{day}", String(pending.monthDay)),
+      answerType: "single_choice",
+      options: [
+        {
+          value: "weekly",
+          label: he.studio.setup.weekdayEveryWeek.replace("{weekday}", pending.weekdayLabel),
+        },
+        {
+          value: "month",
+          label: he.studio.setup.monthDayChoice.replace("{day}", String(pending.monthDay)),
+        },
+      ],
     };
   }
 
@@ -222,27 +300,38 @@ export function setupProgress(state: WorkflowSetupState) {
 }
 
 export function advanceSetup(state: WorkflowSetupState): WorkflowSetupState {
-  const question = nextSetupQuestion(state);
+  const proposal = syncProposalEmail(state.proposal);
+  const withEmail = { ...state, proposal };
+  const question = nextSetupQuestion(withEmail);
+  assertContactNotSkipped(withEmail, question);
+  if (question?.key === "review" && withEmail.recipientIdentity.contactResolution === "pending") {
+    throw new Error("contact_question_skipped");
+  }
   const completed: SetupStep[] = [...state.completedSteps];
   function mark(step: SetupStep) {
     if (!completed.includes(step)) {
       completed.push(step);
     }
   }
-  if (state.requirements.length > 0 && !state.requirements.some((item) => item.kind === "ambiguous")) {
+  if (state.requirements.length > 0) {
     mark("requirements");
     mark("field_types");
   }
-  if (hasRecipient(state.proposal) && !state.pendingEmailCorrection) {
+  if (
+    hasRecipient(withEmail.proposal) &&
+    !withEmail.pendingEmailCorrection &&
+    !withEmail.pendingCompanyConfirm &&
+    question?.step !== "recipient"
+  ) {
     mark("recipient");
   }
-  if (state.proposal.schedule) {
+  if (withEmail.proposal.schedule) {
     mark("trigger");
-    if (!nextScheduleQuestion(state.proposal.schedule)) {
+    if (!state.pendingWeekdayOrMonthDay && !nextScheduleQuestion(withEmail.proposal.schedule)) {
       mark("schedule_details");
     }
   }
-  if (state.reminderDecision !== "not_asked") {
+  if (withEmail.reminderDecision !== "not_asked") {
     mark("reminder");
   }
   const atReview = question?.step === "review";
@@ -250,11 +339,12 @@ export function advanceSetup(state: WorkflowSetupState): WorkflowSetupState {
     mark("review");
   }
   return {
-    ...state,
-    status: atReview ? "review" : "collecting",
+    ...withEmail,
+    status: atReview ? "review" : state.status === "completed" ? "completed" : "collecting",
+    conversationMode: atReview ? "review" : state.conversationMode === "edit" ? "edit" : "setup",
     completedSteps: completed,
     currentStep: question?.step ?? "review",
-    nextQuestion: atReview ? question : question,
+    nextQuestion: question,
     conflict: false,
     updatedAt: new Date().toISOString(),
   };

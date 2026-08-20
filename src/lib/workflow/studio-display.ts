@@ -1,7 +1,27 @@
-import { filePresetFromMimeTypes } from "@/lib/workflow/file-presets";
+import { formatReminderDelayHe, weekdayLabel } from "@/lib/schedule/labels";
+import { fileFormatLabel } from "@/lib/workflow/file-formats";
 import { he } from "@/lib/i18n/he";
-import { weekdayLabel } from "@/lib/schedule/labels";
 import type { DraftSchedule, WorkflowDraftDefinition } from "@/lib/workflow/draft-schema";
+
+export function monthlyEditorDayValue(schedule: Extract<DraftSchedule, { type: "monthly" }>) {
+  if (schedule.monthlyDayMode === "end_of_month") {
+    return "end_of_month";
+  }
+  return schedule.day != null ? String(schedule.day) : "";
+}
+
+export function shouldShowNextSendCard(
+  status: "draft" | "active" | "paused" | "completed",
+  schedule: DraftSchedule | undefined,
+) {
+  if (status === "draft" || status === "completed") {
+    return false;
+  }
+  if (!schedule || schedule.type === "manual" || schedule.type === "send_now") {
+    return false;
+  }
+  return status === "active" || status === "paused";
+}
 
 export function definedText(value: string | null | undefined) {
   const trimmed = value?.trim();
@@ -55,7 +75,11 @@ export function scheduleSummary(schedule: DraftSchedule | undefined) {
     return `${he.studio.weeklyOn.replace("{day}", day)} · ${timePart(schedule.time)}`;
   }
   const dayLabel =
-    schedule.day != null ? he.studio.monthlyOn.replace("{day}", String(schedule.day)) : he.studio.monthDayNotSet;
+    schedule.monthlyDayMode === "end_of_month"
+      ? he.studio.monthlyEndOfMonth
+      : schedule.day != null
+        ? he.studio.monthlyOn.replace("{day}", String(schedule.day))
+        : he.studio.monthDayNotSet;
   return `${dayLabel} · ${timePart(schedule.time)}`;
 }
 
@@ -85,7 +109,7 @@ export function reminderSummary(draft: WorkflowDraftDefinition) {
   if (!draft.reminder.afterHours) {
     return he.studio.notSet;
   }
-  return he.workflow.reminderOn.replace("{hours}", String(draft.reminder.afterHours));
+  return `תזכורת ${formatReminderDelayHe(draft.reminder.afterHours)}`;
 }
 
 export function recipientSummary(draft: WorkflowDraftDefinition) {
@@ -94,12 +118,17 @@ export function recipientSummary(draft: WorkflowDraftDefinition) {
   }
   const named = draft.recipients
     .map((recipient) => {
+      const organization = recipient.organizationName?.trim();
       const name = recipient.name?.trim();
       const email = recipient.email?.trim();
-      if (name && email) {
-        return `${name} · ${email}`;
+      const contact =
+        organization && name && name !== organization
+          ? `${organization} · ${name}`
+          : organization || name;
+      if (contact && email) {
+        return `${contact} · ${email}`;
       }
-      return name || email;
+      return contact || email;
     })
     .filter((value): value is string => Boolean(value));
   if (named.length === 0) {
@@ -131,23 +160,20 @@ export function mimeTypeLabel(mimeType: string) {
   return mimeType;
 }
 
+export function fileLimitsSimpleLabel(field: { allowedMimeTypes?: string[]; maxFileSizeMb: number }) {
+  return he.studio.fileLimitsSimple
+    .replace("{types}", he.studio.setup.formatAll)
+    .replace("{maxMb}", String(field.maxFileSizeMb ?? 10));
+}
+
 export function fileLimitsLabel(field: {
   allowedMimeTypes: string[];
   maxFiles: number;
   maxFileSizeMb: number;
 }) {
-  const preset = filePresetFromMimeTypes(field.allowedMimeTypes ?? []);
-  const types =
-    preset === "all"
-      ? he.studio.filePresetAll
-      : preset === "pdf"
-        ? he.studio.filePresetPdf
-        : preset === "excel"
-          ? he.studio.filePresetExcel
-          : preset === "images"
-            ? he.studio.filePresetImages
-            : he.studio.filePresetVideo;
-  return he.studio.fileLimits
+  const types = fileFormatLabel(field.allowedMimeTypes ?? []);
+  const template = (field.maxFiles ?? 1) === 1 ? he.studio.fileLimitsOne : he.studio.fileLimits;
+  return template
     .replace("{types}", types)
     .replace("{maxFiles}", String(field.maxFiles ?? 1))
     .replace("{maxMb}", String(field.maxFileSizeMb ?? 10));

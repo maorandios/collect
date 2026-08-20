@@ -27,7 +27,7 @@ export function StudioEmailTab({
   readOnly: boolean;
   pending: boolean;
   saved: boolean;
-  onEdit: (draft: WorkflowDraftDefinition, locks: EditorLockKey[]) => void;
+  onEdit: (draft: WorkflowDraftDefinition, locks: EditorLockKey[]) => void | Promise<boolean>;
   onOpenForm: () => void;
 }) {
   const [mode, setMode] = useState<"edit" | "preview">("preview");

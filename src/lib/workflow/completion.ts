@@ -1,6 +1,7 @@
 import { he } from "@/lib/i18n/he";
 import { weekdayLabel } from "@/lib/schedule/labels";
 import { isOnceInThePast } from "@/lib/schedule/next-run";
+import { unconfiguredFieldsMessage } from "@/lib/workflow/draft-fields";
 import type { DraftSchedule, WorkflowDraftDefinition } from "@/lib/workflow/draft-schema";
 import { TIMEZONE } from "@/lib/workflow/schema";
 
@@ -339,7 +340,19 @@ export function getCompletionState(
   options: CompletionOptions,
 ): CompletionState {
   const conversationIssues = conversationIssuesFromDraft(draft, options.userMessage);
-  const externalIssues = externalIssuesFromMailbox(options);
+  const mailboxIssues = externalIssuesFromMailbox(options);
+  const unconfiguredMessage = unconfiguredFieldsMessage(draft.fields);
+  const unconfiguredIssues: CompletionIssue[] = unconfiguredMessage
+    ? [
+        {
+          key: "unconfigured_fields",
+          category: "fields",
+          resolution: "settings",
+          message: unconfiguredMessage,
+        },
+      ]
+    : [];
+  const externalIssues = [...mailboxIssues, ...unconfiguredIssues];
   const draftComplete = conversationIssues.length === 0;
   const nextQuestions = draftComplete
     ? shouldOfferReminder(draft)
@@ -351,7 +364,7 @@ export function getCompletionState(
     externalIssues,
     nextQuestions,
     draftComplete,
-    readyToPublish: draftComplete && externalIssues.length === 0,
+    readyToPublish: draftComplete && mailboxIssues.length === 0 && unconfiguredIssues.length === 0,
   };
 }
 

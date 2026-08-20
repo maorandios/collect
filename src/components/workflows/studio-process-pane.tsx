@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
 import { StudioEmailTab } from "@/components/workflows/studio-email-tab";
@@ -10,6 +10,7 @@ import { StatusBadge } from "@/components/status/status-badge";
 import { Button } from "@/components/ui/button";
 import { he } from "@/lib/i18n/he";
 import type { CompletionIssue } from "@/lib/workflow/completion";
+import { unconfiguredFields, unconfiguredFieldsMessage } from "@/lib/workflow/draft-fields";
 import type { WorkflowDraftDefinition } from "@/lib/workflow/draft-schema";
 import type { EditorLockKey } from "@/lib/workflow/editor-locks";
 import { publishActionForStatus, type WorkflowStatus } from "@/lib/workflow/lifecycle";
@@ -54,12 +55,15 @@ export function StudioProcessPane({
   emailSaved: boolean;
   readOnly: boolean;
   setupState: WorkflowSetupState | null;
-  onDraftEdit: (draft: WorkflowDraftDefinition, locks: EditorLockKey[]) => void;
+  onDraftEdit: (draft: WorkflowDraftDefinition, locks: EditorLockKey[]) => Promise<boolean>;
   onSaveDraft: () => void;
   onSendTest: () => void;
   onPublish: () => void;
 }) {
   const [tab, setTab] = useState<TabId>("summary");
+  const unconfiguredCount = unconfiguredFields(draft.fields).length;
+  const previousUnconfigured = useRef(unconfiguredCount);
+  const unconfiguredMessage = unconfiguredFieldsMessage(draft.fields);
   const publishAction = publishActionForStatus(status);
   const showEmpty = leftPaneIsEmpty(setupState, draft);
   const showBanner = leftPaneShowsPendingBanner(setupState, draft);
@@ -70,6 +74,13 @@ export function StudioProcessPane({
     hidePublish ||
     (publishAction === "activate" && !readyToPublish) ||
     (publishAction === "publishChanges" && (!readyToPublish || !hasUnpublishedChanges));
+
+  useEffect(() => {
+    if (unconfiguredCount > previousUnconfigured.current) {
+      setTab("form");
+    }
+    previousUnconfigured.current = unconfiguredCount;
+  }, [unconfiguredCount]);
 
   return (
     <section className="flex h-full min-h-0 min-w-0 flex-[3] flex-col overflow-hidden bg-background">
@@ -118,6 +129,7 @@ export function StudioProcessPane({
                 draft={draft}
                 mailboxEmail={mailboxEmail}
                 nextRunAt={nextRunAt}
+                status={status}
                 conversationIssues={conversationIssues}
                 externalIssues={externalIssues}
                 readOnly={readOnly}
@@ -164,6 +176,7 @@ export function StudioProcessPane({
               {publishAction === "publishChanges" ? he.actions.applyChanges : he.actions.publish}
             </Button>
           )}
+          {unconfiguredMessage ? <p className="w-full text-sm text-muted-foreground">{unconfiguredMessage}</p> : null}
           {externalIssues.some((issue) => issue.category === "mailbox") ? (
             <Link href="/settings" className="inline-flex h-10 items-center text-sm text-primary hover:underline">
               {he.actions.connectGmail}

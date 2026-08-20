@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { emptyWorkflowDraft } from "@/lib/workflow/draft-schema";
 import { draftFromRecord, type ChatTurnStore, type ChatWorkflowRecord, type StoredChatMessage } from "@/lib/workflow/chat-types";
 import { parseWorkflowSetupState } from "@/lib/workflow/setup-state";
+import { materializeRecipientForRuntime } from "@/lib/workflow/setup-identity";
 
 const WORKFLOW_COLUMNS =
   "id, status, draft_definition, definition, draft_revision, setup_revision, deleted_at, setup_state";
@@ -68,6 +69,55 @@ function rpcError(error: { message?: string } | null | undefined) {
   return null;
 }
 
+export async function findOwnedByIntakeRequestId(
+  userId: string,
+  intakeRequestId: string,
+  admin: ReturnType<typeof createAdminClient> = createAdminClient(),
+): Promise<ChatWorkflowRecord | null> {
+  const first = await admin
+    .from("workflows")
+    .select(WORKFLOW_COLUMNS)
+    .eq("user_id", userId)
+    .is("deleted_at", null)
+    .contains("draft_definition", { intakeRequestId })
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (!first.error) {
+    return first.data ? asRecord(first.data as ChatWorkflowRecord) : null;
+  }
+  if (missingSetupRevision(first.error)) {
+    const second = await admin
+      .from("workflows")
+      .select(WORKFLOW_COLUMNS_NO_SETUP_REV)
+      .eq("user_id", userId)
+      .is("deleted_at", null)
+      .contains("draft_definition", { intakeRequestId })
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (!second.error) {
+      return second.data ? asRecord(second.data as ChatWorkflowRecord) : null;
+    }
+    if (!missingSetupState(second.error)) {
+      return null;
+    }
+  }
+  if (missingSetupState(first.error) || missingSetupRevision(first.error)) {
+    const fallback = await admin
+      .from("workflows")
+      .select(WORKFLOW_COLUMNS_MIN)
+      .eq("user_id", userId)
+      .is("deleted_at", null)
+      .contains("draft_definition", { intakeRequestId })
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    return fallback.data ? asRecord(fallback.data as ChatWorkflowRecord) : null;
+  }
+  return null;
+}
+
 export function createSupabaseChatStore(
   admin: ReturnType<typeof createAdminClient> = createAdminClient(),
 ): ChatTurnStore {
@@ -107,8 +157,11 @@ export function createSupabaseChatStore(
   }
 
   return {
-    async createDraft(userId) {
-      const draft = emptyWorkflowDraft();
+    async createDraft(userId, options) {
+      const draft = {
+        ...emptyWorkflowDraft(),
+        ...(options?.intakeRequestId ? { intakeRequestId: options.intakeRequestId } : {}),
+      };
       const baseInsert = {
         user_id: userId,
         name: he.workflows.untitledDraft,
@@ -337,6 +390,13 @@ export function createSupabaseChatStore(
         if (!Number.isFinite(newRevision) || !Number.isFinite(setupRevision)) {
           throw new Error("save_failed");
         }
+        await this.insertMessage({
+          workflowId: input.workflowId,
+          userId: input.userId,
+          clientTurnId: crypto.randomUUID(),
+          role: "assistant",
+          content: he.studio.setup.processBuilt,
+        });
         return { newRevision, setupRevision, draft };
       }
       const known = rpcError(error);
@@ -368,15 +428,24 @@ export function createSupabaseChatStore(
       }
       const newRevision = latest.draft_revision + 1;
       const nextSetupRevision = latest.setup_revision + 1;
-      const completed = { ...parsed, status: "completed" as const, updatedAt: new Date().toISOString() };
+      const completed = {
+        ...parsed,
+        status: "completed" as const,
+        conversationMode: "edit" as const,
+        pendingEdit: null,
+        nextQuestion: null,
+        baseDraftRevision: newRevision,
+        updatedAt: new Date().toISOString(),
+      };
+      const proposal = materializeRecipientForRuntime(parsed.proposal, parsed.recipientIdentity);
       const patch: Record<string, unknown> = {
-        draft_definition: parsed.proposal,
+        draft_definition: proposal,
         draft_revision: newRevision,
         setup_state: completed,
         setup_revision: nextSetupRevision,
       };
-      if (latest.status === "draft" && parsed.proposal.name.trim()) {
-        patch.name = parsed.proposal.name.trim();
+      if (latest.status === "draft" && proposal.name.trim()) {
+        patch.name = proposal.name.trim();
       }
       let updated = await admin
         .from("workflows")
@@ -412,7 +481,14 @@ export function createSupabaseChatStore(
         if (retry.error || !retry.data) {
           throw new Error(retry.error ? "save_failed" : "revision_conflict");
         }
-        return { newRevision, setupRevision: latest.setup_revision, draft: parsed.proposal };
+        await this.insertMessage({
+          workflowId: input.workflowId,
+          userId: input.userId,
+          clientTurnId: crypto.randomUUID(),
+          role: "assistant",
+          content: he.studio.setup.processBuilt,
+        });
+        return { newRevision, setupRevision: latest.setup_revision, draft: proposal };
       }
       if (updated.error) {
         throw new Error("save_failed");
@@ -420,10 +496,17 @@ export function createSupabaseChatStore(
       if (!updated.data) {
         throw new Error("revision_conflict");
       }
+      await this.insertMessage({
+        workflowId: input.workflowId,
+        userId: input.userId,
+        clientTurnId: crypto.randomUUID(),
+        role: "assistant",
+        content: he.studio.setup.processBuilt,
+      });
       return {
         newRevision,
         setupRevision: Number((updated.data as { setup_revision?: number }).setup_revision ?? nextSetupRevision),
-        draft: parsed.proposal,
+        draft: proposal,
       };
     },
 

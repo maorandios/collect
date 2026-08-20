@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { emptyWorkflowDraft } from "./draft-schema";
+import { ALL_SUPPORTED_FILE_MIME_TYPES } from "./file-formats";
 import { buildFieldFromEditor, validateFieldEditor } from "./field-editor";
 import { applySetupUserTurn, startSetup } from "./setup-agent";
 
@@ -17,14 +18,13 @@ test("adding a text field requires a label and does not use טרם הוגדר", 
   assert.equal(field.label.includes("טרם הוגדר"), false);
 });
 
-test("adding a file field keeps the chosen preset", () => {
-  const field = buildFieldFromEditor(
-    { type: "file", label: "חשבונית", required: true, filePreset: "pdf" },
-    "pending",
-  );
+test("adding a file field uses every supported mime type", () => {
+  const field = buildFieldFromEditor({ type: "file", label: "חשבונית", required: true }, "pending");
   assert.equal(field.type, "file");
   if (field.type === "file") {
-    assert.deepEqual(field.allowedMimeTypes, ["application/pdf"]);
+    assert.deepEqual(field.allowedMimeTypes, [...ALL_SUPPORTED_FILE_MIME_TYPES]);
+    assert.equal(field.maxFiles, 1);
+    assert.equal(field.maxFileSizeMb, 10);
   }
 });
 
@@ -50,9 +50,9 @@ test("a later turn still exposes only one next question", () => {
   });
   const second = applySetupUserTurn({
     current: first.setup,
-    userMessage: "העלאת קובץ",
+    userMessage: "ישראל ישראלי",
   });
-  assert.equal(second.setup.requirements.every((item) => item.kind !== "ambiguous"), true);
-  assert.equal(second.setup.nextQuestion?.step, "recipient");
+  assert.equal(first.setup.proposal.fields.every((field) => field.type === "unconfigured"), true);
+  assert.equal(second.setup.nextQuestion?.key, "recipient_email");
   assert.equal(second.setup.nextQuestion ? 1 : 0, 1);
 });

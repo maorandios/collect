@@ -82,3 +82,11 @@ test("draft schema keeps a partial monthly schedule and published schema rejects
   }
   assert.equal(parseWorkflowDefinition(partial).success, false);
 });
+
+test("published recipient JSON without organizationName still parses", () => {
+  const parsed = parseWorkflowDefinition(oldSendNowJson);
+  assert.equal(parsed.success, true);
+  if (parsed.success) {
+    assert.equal(parsed.data.recipients[0]?.organizationName ?? null, null);
+  }
+});

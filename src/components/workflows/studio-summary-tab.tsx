@@ -11,21 +11,25 @@ import type { CompletionIssue } from "@/lib/workflow/completion";
 import { shouldOfferReminder } from "@/lib/workflow/completion";
 import type { DraftSchedule, WorkflowDraftDefinition } from "@/lib/workflow/draft-schema";
 import type { EditorLockKey } from "@/lib/workflow/editor-locks";
+import type { WorkflowStatus } from "@/lib/workflow/lifecycle";
 import { TIMEZONE } from "@/lib/workflow/schema";
 import {
   definedText,
   eventModeLabel,
   fieldCountLabel,
   mailboxSummary,
-  nextRunSummary,
+  monthlyEditorDayValue,
   recipientSummary,
   reminderSummary,
   scheduleSummary,
+  shouldShowNextSendCard,
 } from "@/lib/workflow/studio-display";
 import { cn } from "@/lib/utils";
 
 const SELECT_CLASS =
   "h-10 w-full rounded-lg border border-input bg-background px-2.5 text-sm outline-none focus-visible:border-ring";
+
+type CardMode = "view" | "editing" | "saving";
 
 function CardShell({
   label,
@@ -82,10 +86,32 @@ function firstMessage(issues: CompletionIssue[]) {
   return issues[0]?.message;
 }
 
+function EditorActions({
+  saving,
+  onSave,
+  onCancel,
+}: {
+  saving: boolean;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="mt-3 flex gap-2">
+      <Button type="button" className="h-9" disabled={saving} onClick={onSave}>
+        {saving ? he.loading.saving : he.actions.save}
+      </Button>
+      <Button type="button" variant="ghost" className="h-9" disabled={saving} onClick={onCancel}>
+        {he.actions.cancel}
+      </Button>
+    </div>
+  );
+}
+
 export function StudioSummaryTab({
   draft,
   mailboxEmail,
   nextRunAt,
+  status,
   conversationIssues,
   externalIssues,
   readOnly,
@@ -95,13 +121,15 @@ export function StudioSummaryTab({
   draft: WorkflowDraftDefinition;
   mailboxEmail: string | null;
   nextRunAt: string | null;
+  status: WorkflowStatus;
   conversationIssues: CompletionIssue[];
   externalIssues: CompletionIssue[];
   readOnly: boolean;
-  onEdit: (draft: WorkflowDraftDefinition, locks: EditorLockKey[]) => void;
+  onEdit: (draft: WorkflowDraftDefinition, locks: EditorLockKey[]) => Promise<boolean>;
   onOpenForm: () => void;
 }) {
   const [open, setOpen] = useState<string | null>(null);
+  const [mode, setMode] = useState<CardMode>("view");
   const gmail = externalIssues.find((issue) => issue.category === "mailbox");
   const scheduleIssues = conversationIssues.filter((issue) => issue.category === "schedule" || issue.key === "event_mode_missing");
   const eventIssue = conversationIssues.find((issue) => issue.key === "event_mode_missing");
@@ -109,28 +137,44 @@ export function StudioSummaryTab({
   const fieldIssue = conversationIssues.find((issue) => issue.key === "fields_missing");
   const reminderSuggestion =
     conversationIssues.length === 0 && shouldOfferReminder(draft) ? he.studio.reminderOffer : undefined;
+  const showNextSend = shouldShowNextSendCard(status, draft.schedule);
+
+  function start(card: string) {
+    setOpen(card);
+    setMode("editing");
+  }
+
+  function cancel() {
+    setOpen(null);
+    setMode("view");
+  }
+
+  async function save(next: WorkflowDraftDefinition, locks: EditorLockKey[]) {
+    setMode("saving");
+    try {
+      const ok = await onEdit(next, locks);
+      if (ok) {
+        setOpen(null);
+        setMode("view");
+        return;
+      }
+      setMode("editing");
+    } catch {
+      setMode("editing");
+    }
+  }
 
   return (
     <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-      <CardShell
-        label={he.workflow.name}
-        editing={open === "name"}
+      <NameCard
+        draft={draft}
+        open={open === "name"}
+        saving={mode === "saving" && open === "name"}
         readOnly={readOnly}
-        onToggle={() => setOpen(open === "name" ? null : "name")}
-      >
-        {open === "name" ? (
-          <Input
-            className="h-10"
-            defaultValue={draft.name}
-            onBlur={(event) => {
-              onEdit({ ...draft, name: event.target.value }, ["name"]);
-              setOpen(null);
-            }}
-          />
-        ) : (
-          <p className="text-sm font-medium leading-6">{definedText(draft.name)}</p>
-        )}
-      </CardShell>
+        onStart={() => start("name")}
+        onCancel={cancel}
+        onSave={(name) => save({ ...draft, name }, ["name"])}
+      />
 
       <CardShell
         label={he.workflow.mailbox}
@@ -152,52 +196,45 @@ export function StudioSummaryTab({
         missing={firstMessage(recipientIssues)}
         editing={open === "recipients"}
         readOnly={readOnly}
-        onToggle={() => setOpen(open === "recipients" ? null : "recipients")}
+        onToggle={() => (open === "recipients" ? cancel() : start("recipients"))}
       >
         {open === "recipients" ? (
-          <RecipientsEditor draft={draft} onEdit={onEdit} />
+          <RecipientsEditor
+            draft={draft}
+            saving={mode === "saving"}
+            onSave={(recipients) => save({ ...draft, recipients, recipientMode: "fixed" }, ["recipients"])}
+            onCancel={cancel}
+          />
         ) : (
           <p className="text-sm font-medium leading-6">{recipientSummary(draft)}</p>
         )}
       </CardShell>
 
-      <CardShell
-        label={he.studio.eventModeLabel}
+      <EventModeCard
+        draft={draft}
         missing={eventIssue?.message}
-        editing={open === "event"}
+        open={open === "event"}
+        saving={mode === "saving" && open === "event"}
         readOnly={readOnly}
-        onToggle={() => setOpen(open === "event" ? null : "event")}
-      >
-        {open === "event" ? (
-          <select
-            className={SELECT_CLASS}
-            value={draft.schedule?.type ?? ""}
-            onChange={(event) => {
-              onEdit({ ...draft, schedule: scheduleFromType(event.target.value) }, ["schedule"]);
-              setOpen(null);
-            }}
-          >
-            <option value="">{he.studio.notSet}</option>
-            <option value="weekly">{he.studio.eventMode.weekly}</option>
-            <option value="monthly">{he.studio.eventMode.monthly}</option>
-            <option value="once">{he.studio.eventMode.once}</option>
-            <option value="manual">{he.studio.eventMode.manual}</option>
-            <option value="send_now">{he.studio.eventMode.sendNow}</option>
-          </select>
-        ) : (
-          <p className="text-sm font-medium leading-6">{eventModeLabel(draft.schedule)}</p>
-        )}
-      </CardShell>
+        onStart={() => start("event")}
+        onCancel={cancel}
+        onSave={(schedule) => save({ ...draft, schedule }, ["schedule"])}
+      />
 
       <CardShell
         label={he.workflow.schedule}
         missing={firstMessage(scheduleIssues.filter((issue) => issue.key !== "event_mode_missing"))}
         editing={open === "schedule"}
         readOnly={readOnly}
-        onToggle={() => setOpen(open === "schedule" ? null : "schedule")}
+        onToggle={() => (open === "schedule" ? cancel() : start("schedule"))}
       >
         {open === "schedule" ? (
-          <ScheduleEditor draft={draft} onEdit={onEdit} />
+          <ScheduleEditor
+            draft={draft}
+            saving={mode === "saving"}
+            onSave={(schedule) => save({ ...draft, schedule }, ["schedule"])}
+            onCancel={cancel}
+          />
         ) : (
           <p className="text-sm font-medium leading-6">{scheduleSummary(draft.schedule)}</p>
         )}
@@ -213,26 +250,209 @@ export function StudioSummaryTab({
         <p className="text-sm font-medium leading-6">{fieldCountLabel(draft.fields.length)}</p>
       </CardShell>
 
-      <CardShell
-        label={he.workflow.reminder}
+      <ReminderCard
+        draft={draft}
         suggestion={reminderSuggestion}
-        editing={open === "reminder"}
+        open={open === "reminder"}
+        saving={mode === "saving" && open === "reminder"}
         readOnly={readOnly}
-        onToggle={() => setOpen(open === "reminder" ? null : "reminder")}
-      >
-        {open === "reminder" ? (
-          <ReminderEditor draft={draft} onEdit={onEdit} />
-        ) : (
-          <p className="text-sm font-medium leading-6">{reminderSummary(draft)}</p>
-        )}
-      </CardShell>
+        onStart={() => start("reminder")}
+        onCancel={cancel}
+        onSave={(reminder, reminderDecision) => save({ ...draft, reminder, reminderDecision }, ["reminder"])}
+      />
 
-      <CardShell label={he.studio.nextRun} editing={false} readOnly={readOnly} hideChange>
-        <p className="text-sm font-medium leading-6">
-          {nextRunAt ? formatIsraelDateTime(nextRunAt) : nextRunSummary(draft.schedule)}
-        </p>
-      </CardShell>
+      {showNextSend ? (
+        <CardShell label={he.studio.nextRun} editing={false} readOnly={readOnly} hideChange>
+          <p className="text-sm font-medium leading-6">
+            {status === "paused" ? he.studio.nextSendPaused : nextRunAt ? formatIsraelDateTime(nextRunAt) : he.studio.notSet}
+          </p>
+        </CardShell>
+      ) : null}
     </div>
+  );
+}
+
+function NameCard({
+  draft,
+  open,
+  saving,
+  readOnly,
+  onStart,
+  onCancel,
+  onSave,
+}: {
+  draft: WorkflowDraftDefinition;
+  open: boolean;
+  saving: boolean;
+  readOnly: boolean;
+  onStart: () => void;
+  onCancel: () => void;
+  onSave: (name: string) => void;
+}) {
+  const [name, setName] = useState(draft.name);
+  return (
+    <CardShell
+      label={he.workflow.name}
+      editing={open}
+      readOnly={readOnly}
+      onToggle={() => {
+        if (open) {
+          setName(draft.name);
+          onCancel();
+          return;
+        }
+        setName(draft.name);
+        onStart();
+      }}
+    >
+      {open ? (
+        <>
+          <Input className="h-10" value={name} onChange={(event) => setName(event.target.value)} />
+          <EditorActions saving={saving} onSave={() => onSave(name)} onCancel={() => { setName(draft.name); onCancel(); }} />
+        </>
+      ) : (
+        <p className="text-sm font-medium leading-6">{definedText(draft.name)}</p>
+      )}
+    </CardShell>
+  );
+}
+
+function EventModeCard({
+  draft,
+  missing,
+  open,
+  saving,
+  readOnly,
+  onStart,
+  onCancel,
+  onSave,
+}: {
+  draft: WorkflowDraftDefinition;
+  missing?: string;
+  open: boolean;
+  saving: boolean;
+  readOnly: boolean;
+  onStart: () => void;
+  onCancel: () => void;
+  onSave: (schedule: DraftSchedule | undefined) => void;
+}) {
+  const [type, setType] = useState(draft.schedule?.type ?? "");
+  return (
+    <CardShell
+      label={he.studio.eventModeLabel}
+      missing={missing}
+      editing={open}
+      readOnly={readOnly}
+      onToggle={() => {
+        if (open) {
+          setType(draft.schedule?.type ?? "");
+          onCancel();
+          return;
+        }
+        setType(draft.schedule?.type ?? "");
+        onStart();
+      }}
+    >
+      {open ? (
+        <>
+          <select className={SELECT_CLASS} value={type} onChange={(event) => setType(event.target.value)}>
+            <option value="">{he.studio.notSet}</option>
+            <option value="weekly">{he.studio.eventMode.weekly}</option>
+            <option value="monthly">{he.studio.eventMode.monthly}</option>
+            <option value="once">{he.studio.eventMode.once}</option>
+            <option value="manual">{he.studio.eventMode.manual}</option>
+            <option value="send_now">{he.studio.eventMode.sendNow}</option>
+          </select>
+          <EditorActions
+            saving={saving}
+            onSave={() => {
+              if (type === draft.schedule?.type) {
+                onSave(draft.schedule);
+                return;
+              }
+              onSave(scheduleFromType(type));
+            }}
+            onCancel={() => {
+              setType(draft.schedule?.type ?? "");
+              onCancel();
+            }}
+          />
+        </>
+      ) : (
+        <p className="text-sm font-medium leading-6">{eventModeLabel(draft.schedule)}</p>
+      )}
+    </CardShell>
+  );
+}
+
+function ReminderCard({
+  draft,
+  suggestion,
+  open,
+  saving,
+  readOnly,
+  onStart,
+  onCancel,
+  onSave,
+}: {
+  draft: WorkflowDraftDefinition;
+  suggestion?: string;
+  open: boolean;
+  saving: boolean;
+  readOnly: boolean;
+  onStart: () => void;
+  onCancel: () => void;
+  onSave: (
+    reminder: WorkflowDraftDefinition["reminder"],
+    reminderDecision: WorkflowDraftDefinition["reminderDecision"],
+  ) => void;
+}) {
+  const initial =
+    draft.reminderDecision === "declined" || !draft.reminder.enabled ? "none" : String(draft.reminder.afterHours ?? 48);
+  const [value, setValue] = useState(initial);
+  return (
+    <CardShell
+      label={he.workflow.reminder}
+      suggestion={suggestion}
+      editing={open}
+      readOnly={readOnly}
+      onToggle={() => {
+        if (open) {
+          setValue(initial);
+          onCancel();
+          return;
+        }
+        setValue(initial);
+        onStart();
+      }}
+    >
+      {open ? (
+        <>
+          <select className={SELECT_CLASS} value={value} onChange={(event) => setValue(event.target.value)}>
+            <option value="none">{he.workflow.reminderOff}</option>
+            <option value="24">{he.studio.reminderAfterDay}</option>
+            <option value="48">{he.studio.reminderAfterTwoDays}</option>
+            <option value="168">{he.studio.reminderAfterWeek}</option>
+          </select>
+          <EditorActions
+            saving={saving}
+            onSave={() => {
+              if (value === "none") {
+                onSave({ enabled: false, afterHours: null, afterMinutes: null }, "declined");
+                return;
+              }
+              onSave({ enabled: true, afterHours: Number(value), afterMinutes: null }, "enabled");
+            }}
+            onCancel={() => {
+              setValue(initial);
+              onCancel();
+            }}
+          />
+        </>
+      ) : (
+        <p className="text-sm font-medium leading-6">{reminderSummary(draft)}</p>
+      )}
+    </CardShell>
   );
 }
 
@@ -257,16 +477,18 @@ function scheduleFromType(type: string): DraftSchedule | undefined {
 
 function RecipientsEditor({
   draft,
-  onEdit,
+  saving,
+  onSave,
+  onCancel,
 }: {
   draft: WorkflowDraftDefinition;
-  onEdit: (draft: WorkflowDraftDefinition, locks: EditorLockKey[]) => void;
+  saving: boolean;
+  onSave: (recipients: WorkflowDraftDefinition["recipients"]) => void;
+  onCancel: () => void;
 }) {
-  const recipients = draft.recipients.length > 0 ? draft.recipients : [{ name: "", email: "" }];
-
-  function commit(next: WorkflowDraftDefinition["recipients"]) {
-    onEdit({ ...draft, recipients: next, recipientMode: "fixed" }, ["recipients"]);
-  }
+  const [recipients, setRecipients] = useState(
+    draft.recipients.length > 0 ? draft.recipients : [{ name: "", email: "" }],
+  );
 
   return (
     <div className="space-y-2">
@@ -275,62 +497,60 @@ function RecipientsEditor({
           <Input
             className="h-10"
             placeholder={he.studio.recipientName}
-            defaultValue={recipient.name ?? ""}
-            onBlur={(event) => {
-              const next = recipients.map((item, itemIndex) =>
-                itemIndex === index ? { ...item, name: event.target.value } : item,
+            value={recipient.name ?? ""}
+            onChange={(event) => {
+              setRecipients(
+                recipients.map((item, itemIndex) =>
+                  itemIndex === index ? { ...item, name: event.target.value } : item,
+                ),
               );
-              commit(next);
             }}
           />
           <Input
             className="h-10"
             dir="ltr"
             placeholder={he.studio.recipientEmail}
-            defaultValue={recipient.email ?? ""}
-            onBlur={(event) => {
-              const next = recipients.map((item, itemIndex) =>
-                itemIndex === index ? { ...item, email: event.target.value } : item,
+            value={recipient.email ?? ""}
+            onChange={(event) => {
+              setRecipients(
+                recipients.map((item, itemIndex) =>
+                  itemIndex === index ? { ...item, email: event.target.value } : item,
+                ),
               );
-              commit(next);
             }}
           />
           <Button
             type="button"
             variant="ghost"
             className="h-10"
-            onClick={() => commit(recipients.filter((_, itemIndex) => itemIndex !== index))}
+            onClick={() => setRecipients(recipients.filter((_, itemIndex) => itemIndex !== index))}
           >
             {he.studio.removeRecipient}
           </Button>
         </div>
       ))}
-      <Button
-        type="button"
-        variant="outline"
-        className="h-9"
-        onClick={() => commit([...recipients, { name: "", email: "" }])}
-      >
+      <Button type="button" variant="outline" className="h-9" onClick={() => setRecipients([...recipients, { name: "", email: "" }])}>
         {he.studio.addRecipient}
       </Button>
+      <EditorActions saving={saving} onSave={() => onSave(recipients)} onCancel={onCancel} />
     </div>
   );
 }
 
 function ScheduleEditor({
   draft,
-  onEdit,
+  saving,
+  onSave,
+  onCancel,
 }: {
   draft: WorkflowDraftDefinition;
-  onEdit: (draft: WorkflowDraftDefinition, locks: EditorLockKey[]) => void;
+  saving: boolean;
+  onSave: (schedule: DraftSchedule) => void;
+  onCancel: () => void;
 }) {
-  const schedule = draft.schedule;
+  const [schedule, setSchedule] = useState<DraftSchedule | undefined>(draft.schedule);
   if (!schedule || schedule.type === "manual" || schedule.type === "send_now") {
     return <p className="text-sm text-muted-foreground">{scheduleSummary(schedule)}</p>;
-  }
-
-  function commit(next: DraftSchedule) {
-    onEdit({ ...draft, schedule: next }, ["schedule"]);
   }
 
   return (
@@ -339,7 +559,9 @@ function ScheduleEditor({
         <select
           className={SELECT_CLASS}
           value={schedule.weekday ?? ""}
-          onChange={(event) => commit({ ...schedule, weekday: event.target.value === "" ? null : Number(event.target.value) })}
+          onChange={(event) =>
+            setSchedule({ ...schedule, weekday: event.target.value === "" ? null : Number(event.target.value) })
+          }
         >
           <option value="">{he.studio.weekdayNotSet}</option>
           <option value="0">{he.workflow.sunday}</option>
@@ -352,79 +574,53 @@ function ScheduleEditor({
         </select>
       ) : null}
       {schedule.type === "monthly" ? (
-        <Input
-          className="h-10"
-          type="number"
-          min={1}
-          max={31}
-          defaultValue={schedule.day ?? ""}
-          onBlur={(event) => {
+        <select
+          className={SELECT_CLASS}
+          value={monthlyEditorDayValue(schedule)}
+          onChange={(event) => {
+            if (event.target.value === "end_of_month") {
+              setSchedule({ ...schedule, day: 31, monthlyDayMode: "end_of_month" });
+              return;
+            }
             const day = Number(event.target.value);
-            commit({ ...schedule, day: Number.isFinite(day) && day >= 1 && day <= 31 ? day : null });
+            setSchedule({
+              ...schedule,
+              day: Number.isFinite(day) && day >= 1 && day <= 31 ? day : null,
+              monthlyDayMode: "specific_day",
+            });
           }}
-        />
+        >
+          <option value="">{he.studio.monthDayNotSet}</option>
+          <option value="end_of_month">{he.studio.setup.monthDayEnd}</option>
+          {Array.from({ length: 31 }, (_, index) => index + 1).map((day) => (
+            <option key={day} value={String(day)}>
+              {day}
+            </option>
+          ))}
+        </select>
       ) : null}
       {schedule.type === "once" ? (
         <Input
           className="h-10"
           type="date"
-          defaultValue={schedule.date ?? ""}
-          onBlur={(event) => commit({ ...schedule, date: event.target.value || null })}
+          value={schedule.date ?? ""}
+          onChange={(event) => setSchedule({ ...schedule, date: event.target.value || null })}
         />
       ) : null}
       <Input
         className="h-10"
         type="time"
-        defaultValue={schedule.time ?? ""}
-        onBlur={(event) => commit({ ...schedule, time: event.target.value || null, timezone: TIMEZONE })}
+        value={schedule.time ?? ""}
+        onChange={(event) => setSchedule({ ...schedule, time: event.target.value || null, timezone: TIMEZONE })}
       />
-    </div>
-  );
-}
-
-function ReminderEditor({
-  draft,
-  onEdit,
-}: {
-  draft: WorkflowDraftDefinition;
-  onEdit: (draft: WorkflowDraftDefinition, locks: EditorLockKey[]) => void;
-}) {
-  return (
-    <div className="space-y-2">
-      <select
-        className={SELECT_CLASS}
-        value={
-          draft.reminderDecision === "declined" || !draft.reminder.enabled
-            ? "none"
-            : String(draft.reminder.afterHours ?? 48)
-        }
-        onChange={(event) => {
-          if (event.target.value === "none") {
-            onEdit(
-              {
-                ...draft,
-                reminder: { enabled: false, afterHours: null, afterMinutes: null },
-                reminderDecision: "declined",
-              },
-              ["reminder"],
-            );
-            return;
-          }
-          onEdit(
-            {
-              ...draft,
-              reminder: { enabled: true, afterHours: Number(event.target.value), afterMinutes: null },
-              reminderDecision: "enabled",
-            },
-            ["reminder"],
-          );
+      <EditorActions
+        saving={saving}
+        onSave={() => onSave(schedule)}
+        onCancel={() => {
+          setSchedule(draft.schedule);
+          onCancel();
         }}
-      >
-        <option value="none">{he.workflow.reminderOff}</option>
-        <option value="24">{he.studio.reminderAfterDay}</option>
-        <option value="48">{he.studio.reminderAfterTwoDays}</option>
-        <option value="168">{he.studio.reminderAfterWeek}</option>
-      </select>
+      />
     </div>
   );
 }

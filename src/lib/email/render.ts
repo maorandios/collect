@@ -1,6 +1,40 @@
-import { escapeAttribute, escapeHtml } from "@/lib/email/escape";
+import { escapeAttribute, escapeHtml, unescapeEmailAddress } from "@/lib/email/escape";
 import { formatIsraelDateTime } from "@/lib/dates";
 import { he } from "@/lib/i18n/he";
+
+export function requestEmailBodyToHtml(body: string) {
+  const clean = unescapeEmailAddress(body);
+  const lines = clean.split(/\n/);
+  const parts: string[] = [];
+  let bullets: string[] = [];
+  const flushBullets = () => {
+    if (bullets.length === 0) {
+      return;
+    }
+    parts.push(
+      `<ul dir="rtl" style="margin:0 0 16px;padding-inline-start:20px;">${bullets
+        .map((item) => `<li>${escapeHtml(item)}</li>`)
+        .join("")}</ul>`,
+    );
+    bullets = [];
+  };
+  for (const line of lines) {
+    const bullet = line.match(/^[•\-*]\s*(.+)$/);
+    if (bullet) {
+      bullets.push(bullet[1]);
+      continue;
+    }
+    flushBullets();
+    if (line.trim() === "") {
+      continue;
+    }
+    parts.push(
+      `<p dir="rtl" style="margin:0 0 12px;font-size:15px;line-height:1.6;">${escapeHtml(line)}</p>`,
+    );
+  }
+  flushBullets();
+  return parts.join("");
+}
 
 export function buildRequestEmail({
   businessName,
@@ -29,7 +63,11 @@ export function buildRequestEmail({
     ? he.email.helloNamed.replace("{name}", recipientName)
     : he.email.hello;
   const safeLink = escapeAttribute(magicLinkUrl);
-  const bodyHtml = escapeHtml(body).replaceAll("\n", "<br />");
+  const bodyAlreadyGreets = /^\s*שלום/.test(body);
+  const greetingHtml = bodyAlreadyGreets
+    ? ""
+    : `<p style="margin:0 0 16px;font-size:16px;">${escapeHtml(greeting)}</p>`;
+  const bodyHtml = requestEmailBodyToHtml(body);
   const dueLine = dueAt
     ? `<p style="color:#6b6f76;font-size:14px;">${escapeHtml(he.email.dueDate)}: ${escapeHtml(formatIsraelDateTime(dueAt))}</p>`
     : "";
@@ -41,8 +79,8 @@ export function buildRequestEmail({
       <tr>
         <td style="padding:28px;">
           <p style="margin:0 0 8px;font-size:13px;color:#6b6f76;">${escapeHtml(businessName)}</p>
-          <p style="margin:0 0 16px;font-size:16px;">${escapeHtml(greeting)}</p>
-          <p style="margin:0 0 24px;font-size:15px;line-height:1.6;">${bodyHtml}</p>
+          ${greetingHtml}
+          <div style="margin:0 0 24px;">${bodyHtml}</div>
           ${dueLine}
           <p style="margin:24px 0;">
             <a href="${safeLink}" style="display:inline-block;background:#252729;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:8px;font-size:15px;">
@@ -51,7 +89,7 @@ export function buildRequestEmail({
           </p>
           <p style="margin:0;font-size:13px;color:#6b6f76;line-height:1.5;">
             ${escapeHtml(he.email.linkFallback)}<br />
-            ${escapeHtml(magicLinkUrl)}
+            ${escapeHtml(unescapeEmailAddress(magicLinkUrl))}
           </p>
         </td>
       </tr>

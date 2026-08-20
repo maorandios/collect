@@ -1,5 +1,5 @@
 import { he } from "@/lib/i18n/he";
-import { FILE_PRESET_IDS, FILE_PRESET_MIME, type FilePresetId } from "@/lib/workflow/file-presets";
+import { ALL_SUPPORTED_FILE_MIME_TYPES } from "@/lib/workflow/file-formats";
 import type { WorkflowField } from "@/lib/workflow/schema";
 
 export type FieldEditorInput = {
@@ -8,7 +8,6 @@ export type FieldEditorInput = {
   label: string;
   required: boolean;
   helpText?: string;
-  filePreset?: FilePresetId;
   maxFiles?: number;
   maxFileSizeMb?: number;
 };
@@ -23,14 +22,13 @@ export function validateFieldEditor(input: FieldEditorInput) {
 export function buildFieldFromEditor(input: FieldEditorInput, id: string): WorkflowField {
   const label = input.label.trim();
   if (input.type === "file") {
-    const preset = input.filePreset ?? "all";
     return {
       id,
       type: "file",
       label,
       required: input.required,
       helpText: input.helpText?.trim() || null,
-      allowedMimeTypes: [...FILE_PRESET_MIME[preset]],
+      allowedMimeTypes: [...ALL_SUPPORTED_FILE_MIME_TYPES],
       maxFiles: input.maxFiles && input.maxFiles > 0 ? input.maxFiles : 1,
       maxFileSizeMb: input.maxFileSizeMb && input.maxFileSizeMb > 0 ? input.maxFileSizeMb : 10,
     };
@@ -44,4 +42,4 @@ export function buildFieldFromEditor(input: FieldEditorInput, id: string): Workf
   };
 }
 
-export { FILE_PRESET_IDS };
+export { FILE_PRESET_IDS } from "@/lib/workflow/file-presets";

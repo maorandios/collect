@@ -49,6 +49,7 @@ export const scheduleSchema = z.discriminatedUnion("type", [
 
 const recipientSchema = z.object({
   name: z.string().nullable(),
+  organizationName: z.string().nullable().optional(),
   email: z.string().email(),
 });
 

@@ -35,5 +35,19 @@ export function omitDraftOnlyFields(draft: Record<string, unknown>) {
   const rest = { ...draft };
   delete rest.editorLocks;
   delete rest.reminderDecision;
+  delete rest.draftReminder;
+  delete rest.emailEditingState;
+  delete rest.intakeRequestId;
+  if (Array.isArray(rest.recipients)) {
+    rest.recipients = rest.recipients.map((recipient) => {
+      if (!recipient || typeof recipient !== "object") {
+        return recipient;
+      }
+      const next = { ...(recipient as Record<string, unknown>) };
+      delete next.contactName;
+      delete next.contactResolution;
+      return next;
+    });
+  }
   return rest;
 }

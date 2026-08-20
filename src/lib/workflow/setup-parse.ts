@@ -1,4 +1,6 @@
+import { he } from "@/lib/i18n/he";
 import { extractEmails } from "@/lib/workflow/setup-extract";
+import { extractContactPerson } from "@/lib/workflow/setup-identity";
 import type { SetupQuestion } from "@/lib/workflow/setup-state";
 
 const WEEKDAYS: Array<{ day: number; pattern: RegExp }> = [
@@ -11,12 +13,11 @@ const WEEKDAYS: Array<{ day: number; pattern: RegExp }> = [
   { day: 6, pattern: /בימי שבת|כל יום שבת|יום שבת|(^|\s)שבת(\s|$)/ },
 ];
 
-const PERSON_SKIP = new Set(["כל", "טופס", "מייל", "בקשה", "תהליך", "חודש", "שבוע", "חברת", "נהל", "מנהל"]);
-const FROM_WORD_SKIP = /מנהל|מחברת|מטופס|מסמך/;
 
 const EMAIL_TYPOS: Record<string, string> = {
   "gmial.com": "gmail.com",
   "gamil.com": "gmail.com",
+  "gmai.com": "gmail.com",
   "hotmial.com": "hotmail.com",
   "outlok.com": "outlook.com",
 };
@@ -42,6 +43,92 @@ export const SETUP_INTERPRET_MIN_CONFIDENCE = 0.7;
 
 export function looksLikeEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+export type EmailValidationReason =
+  | "comma_in_domain"
+  | "missing_at"
+  | "multiple_at"
+  | "contains_space"
+  | "missing_tld"
+  | "common_domain_typo"
+  | "invalid_structure";
+
+export type EmailValidationResult =
+  | { valid: true; normalizedEmail: string }
+  | { valid: false; reason: EmailValidationReason; suggestion?: string };
+
+export function looksLikeEmailAttempt(message: string) {
+  const text = message.replace(/\\@/g, "@").trim();
+  if (!text) {
+    return false;
+  }
+  return /@/.test(text) || /gmail|hotmail|outlook/i.test(text) || /^[A-Za-z0-9._%+-]+\.[A-Za-z]{2,}$/.test(text);
+}
+
+export function validateEmail(raw: string): EmailValidationResult {
+  const input = raw.replace(/\\@/g, "@").trim();
+  if (!input) {
+    return { valid: false, reason: "invalid_structure" };
+  }
+  if (input.includes(",") && /@[^@]*,/.test(input)) {
+    const suggestion = input.replace(",", ".");
+    const nested = validateEmail(suggestion);
+    return {
+      valid: false,
+      reason: "comma_in_domain",
+      suggestion: nested.valid ? nested.normalizedEmail : suggestion,
+    };
+  }
+  if (/\s/.test(input)) {
+    return { valid: false, reason: "contains_space" };
+  }
+  const atCount = (input.match(/@/g) ?? []).length;
+  if (atCount === 0) {
+    return { valid: false, reason: "missing_at" };
+  }
+  if (atCount > 1) {
+    return { valid: false, reason: "multiple_at" };
+  }
+  const at = input.indexOf("@");
+  const local = input.slice(0, at);
+  const domain = input.slice(at + 1);
+  if (!local || !domain) {
+    return { valid: false, reason: "invalid_structure" };
+  }
+  const suggestedDomain = EMAIL_TYPOS[domain.toLowerCase()];
+  if (suggestedDomain) {
+    return { valid: false, reason: "common_domain_typo", suggestion: `${local}@${suggestedDomain}` };
+  }
+  if (!domain.includes(".")) {
+    return { valid: false, reason: "missing_tld" };
+  }
+  if (!looksLikeEmail(input)) {
+    return { valid: false, reason: "invalid_structure" };
+  }
+  return { valid: true, normalizedEmail: input };
+}
+
+export function emailValidationMessage(result: Extract<EmailValidationResult, { valid: false }>) {
+  if (result.reason === "comma_in_domain" && result.suggestion) {
+    return he.studio.setup.emailCommaInDomain.replace("{email}", result.suggestion);
+  }
+  if (result.reason === "missing_at") {
+    return he.studio.setup.emailMissingAt;
+  }
+  if (result.reason === "multiple_at") {
+    return he.studio.setup.emailMultipleAt;
+  }
+  if (result.reason === "contains_space") {
+    return he.studio.setup.emailContainsSpace;
+  }
+  if (result.reason === "missing_tld") {
+    return he.studio.setup.emailMissingTld;
+  }
+  if (result.reason === "common_domain_typo" && result.suggestion) {
+    return he.studio.setup.emailCommonTypo.replace("{email}", result.suggestion);
+  }
+  return he.studio.setup.emailInvalidStructure;
 }
 
 function formatTime(hours: number, minutes: number) {
@@ -105,18 +192,103 @@ export function extractWeekday(message: string) {
   return null;
 }
 
-export function extractMonthDay(message: string, question: SetupQuestion | null) {
-  const month = message.match(/(?:בכל\s+)?(\d{1,2})\s+בחודש/);
-  if (month) {
-    const day = Number(month[1]);
-    return day >= 1 && day <= 31 ? day : null;
+const HEBREW_MONTH_DAY_WORDS: Array<{ day: number; pattern: RegExp }> = [
+  { day: 31, pattern: /סוף החודש|האחרון בחודש|סוף חודש/ },
+  { day: 21, pattern: /ה?עשרים ואחד/ },
+  { day: 22, pattern: /ה?עשרים ו(?:שתיים|שתים)/ },
+  { day: 10, pattern: /(?:^|\s)ה?עשרה(?:\s|$)/ },
+  { day: 9, pattern: /(?:^|\s)ה?תשעה(?:\s|$)/ },
+  { day: 8, pattern: /(?:^|\s)ה?שמונה(?:\s|$)/ },
+  { day: 7, pattern: /(?:^|\s)ה?שבעה(?:\s|$)/ },
+  { day: 6, pattern: /(?:^|\s)ה?שישה(?:\s|$)/ },
+  { day: 5, pattern: /(?:^|\s)ה?חמישה(?:\s|$)/ },
+  { day: 4, pattern: /(?:^|\s)ה?ארבעה(?:\s|$)/ },
+  { day: 3, pattern: /(?:^|\s)ה?שלושה(?:\s|$)/ },
+  { day: 2, pattern: /(?:^|\s)ה?(?:שניים|שתיים|שתים)(?:\s|$)/ },
+  { day: 1, pattern: /(?:^|\s)ה?אחד(?:\s|$)/ },
+];
+
+const WEEKDAY_NAME = "ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת";
+const BARE_WEEKDAY = new RegExp(`^(?:ביום\\s+|יום\\s+)?ה?(${WEEKDAY_NAME})$`, "u");
+const WEEKDAY_LABELS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"] as const;
+
+function clampMonthDay(day: number) {
+  return day >= 1 && day <= 31 ? day : null;
+}
+
+export function weekdayLabel(weekday: number) {
+  return WEEKDAY_LABELS[weekday] ?? "";
+}
+
+export function extractBareWeekdayName(message: string) {
+  const text = message.trim();
+  if (!BARE_WEEKDAY.test(text)) {
+    return null;
   }
-  if (question?.key === "monthly_day" || question?.key === "change") {
-    const only = message.match(/^\s*(\d{1,2})\s*$/);
-    if (only) {
-      const day = Number(only[1]);
-      return day >= 1 && day <= 31 ? day : null;
+  return extractWeekday(text.replace(/^(?:ביום|יום)\s+/u, "").replace(/^ה/, ""));
+}
+
+export function parseMonthlyDayMode(message: string): "end_of_month" | "specific_day" {
+  return /סוף החודש|האחרון בחודש|סוף חודש|end_of_month/.test(message.trim())
+    ? "end_of_month"
+    : "specific_day";
+}
+
+export function extractMonthDay(message: string, question: SetupQuestion | null) {
+  const text = message.trim();
+  if (extractBareWeekdayName(text) != null) {
+    return null;
+  }
+  const dated = text.match(/בתאריך\s+(\d{1,2})/);
+  if (dated) {
+    return clampMonthDay(Number(dated[1]));
+  }
+  const everyMonth = text.match(/(\d{1,2})\s+בכל\s+חודש/);
+  if (everyMonth) {
+    return clampMonthDay(Number(everyMonth[1]));
+  }
+  const month = text.match(/(?:בכל\s+)?(\d{1,2})\s+בחודש/);
+  if (month) {
+    return clampMonthDay(Number(month[1]));
+  }
+  const prefixed = text.match(/^ב[-\s־]?(\d{1,2})$/u);
+  if (prefixed) {
+    return clampMonthDay(Number(prefixed[1]));
+  }
+  for (const item of HEBREW_MONTH_DAY_WORDS) {
+    if (item.pattern.test(text)) {
+      return item.day;
     }
+  }
+  if (question?.key === "monthly_day" || question?.key === "change" || question?.key === "weekday_or_month_day") {
+    const only = text.match(/^\s*(\d{1,2})\s*$/);
+    if (only) {
+      return clampMonthDay(Number(only[1]));
+    }
+  }
+  return null;
+}
+
+export function parseWeekdayOrMonthDayChoice(
+  message: string,
+  pending: { weekday: number; monthDay: number } | null,
+) {
+  const text = message.trim();
+  if (!text) {
+    return null;
+  }
+  if (text === "weekly" || /בכל שבוע|שבועי/.test(text)) {
+    return { kind: "weekly" as const };
+  }
+  if (text === "month" || text === "monthly") {
+    return { kind: "month" as const, day: pending?.monthDay ?? null };
+  }
+  const day = extractMonthDay(text, { key: "weekday_or_month_day", step: "schedule_details", question: text, answerType: "text" });
+  if (day != null) {
+    return { kind: "month" as const, day };
+  }
+  if (pending && text === String(pending.monthDay)) {
+    return { kind: "month" as const, day: pending.monthDay };
   }
   return null;
 }
@@ -134,22 +306,7 @@ export function extractDate(message: string) {
 }
 
 export function extractPersonName(message: string) {
-  const to = message.match(/(?:שלח|שלחו|אסוף|אספו)\s+ל([א-ת]{2,12})(?:\s+([א-ת]{2,12}))?/);
-  if (to?.[1] && !PERSON_SKIP.has(to[1])) {
-    if (to[2] && !PERSON_SKIP.has(to[2])) {
-      return `${to[1]} ${to[2]}`;
-    }
-    return to[1];
-  }
-  const fromTwo = message.match(/\sמ(?!נהל|חברת)([א-ת]{2,12}\s+[א-ת]{2,12})(?:\s|$)/);
-  if (fromTwo?.[1] && !PERSON_SKIP.has(fromTwo[1].split(/\s+/)[0] ?? "")) {
-    return fromTwo[1];
-  }
-  const from = message.match(/\sמ(?!נהל|חברת)([א-ת]{2,12})(?:\s|$)/);
-  if (from?.[1] && !PERSON_SKIP.has(from[1]) && !FROM_WORD_SKIP.test(`מ${from[1]}`)) {
-    return from[1];
-  }
-  return null;
+  return extractContactPerson(message)?.value ?? null;
 }
 
 export function parseFieldKind(message: string) {
@@ -166,26 +323,53 @@ export function parseFieldKind(message: string) {
   if (/טקסט חופשי|^טקסט$|כטקסט|\btext\b/i.test(text)) {
     return "text" as const;
   }
+  if (/^מספר$|כמספר|\bnumber\b/i.test(text)) {
+    return "number" as const;
+  }
+  return null;
+}
+
+export type SetupScheduleIntent = "once" | "weekly" | "monthly" | "manual" | "send_now" | "daily";
+
+export function parseScheduleIntent(message: string): SetupScheduleIntent | null {
+  const text = message.trim();
+  if (!text) {
+    return null;
+  }
+  if (new RegExp(`(?:כל יום|בימי)\\s+(?:${WEEKDAY_NAME})`, "u").test(text)) {
+    return "weekly";
+  }
+  if (
+    /כל חודש|מדי חודש|פעם בחודש|בכל חודש|חודשי|בקשה חודשית|תהליך חודשי|monthly|(?:בכל\s+)?\d{1,2}\s+בחודש/i.test(
+      text,
+    )
+  ) {
+    return "monthly";
+  }
+  if (/כל שבוע|מדי שבוע|פעם בשבוע|שבועי|תהליך שבועי|weekly/i.test(text)) {
+    return "weekly";
+  }
+  if (new RegExp(`כל יום(?!\\s+(?:${WEEKDAY_NAME}))`, "u").test(text) || /\bdaily\b/i.test(text)) {
+    return "daily";
+  }
+  if (/באופן חד[־\-\s]?פעמי|פעם אחת|חד[־\-\s]?פעמי|\bonce\b/i.test(text)) {
+    return "once";
+  }
+  if (/לפי הצורך|ידני|manual/i.test(text)) {
+    return "manual";
+  }
+  if (/עכשיו|מיידי|send_now/i.test(text)) {
+    return "send_now";
+  }
   return null;
 }
 
 export function parseTriggerType(message: string) {
-  if (/חודשי|monthly/i.test(message) || /(?:בכל\s+)?\d{1,2}\s+בחודש/.test(message)) {
-    return "monthly" as const;
+  const intent = parseScheduleIntent(message);
+  if (!intent || intent === "daily") {
+    return null;
   }
-  if (/שבועי|weekly|כל שבוע|פעם בשבוע|מדי שבוע/i.test(message)) {
-    return "weekly" as const;
-  }
-  if (/חד־פעמי|חד פעמי|חד-פעמי|once/i.test(message)) {
-    return "once" as const;
-  }
-  if (/ידני|manual/i.test(message)) {
-    return "manual" as const;
-  }
-  if (/עכשיו|מיידי|send_now/i.test(message)) {
-    return "send_now" as const;
-  }
-  return null;
+  return intent;
 }
 
 export function parseReminderChoice(message: string) {
@@ -205,35 +389,53 @@ export function parseReminderChoice(message: string) {
 }
 
 export function firstEmail(message: string) {
-  return extractEmails(message)[0] ?? (looksLikeEmail(message) ? message.trim() : null);
+  const cleaned = message.replace(/\\@/g, "@");
+  return extractEmails(cleaned)[0] ?? (looksLikeEmail(cleaned) ? cleaned.trim() : null);
+}
+
+export function parseNoFixedContact(message: string) {
+  return /אין איש קשר/.test(message.trim());
+}
+
+export function parseCompanyConfirm(message: string) {
+  const text = message.trim();
+  if (text === "yes" || text === "כן") {
+    return "confirm" as const;
+  }
+  if (/שינוי שם/.test(text)) {
+    return "change" as const;
+  }
+  return null;
 }
 
 export function suggestEmailTypo(email: string) {
-  const trimmed = email.trim();
-  const at = trimmed.lastIndexOf("@");
-  if (at < 0) {
+  const result = validateEmail(email);
+  if (result.valid || !result.suggestion) {
     return null;
   }
-  const domain = trimmed.slice(at + 1).toLowerCase();
-  const suggestedDomain = EMAIL_TYPOS[domain];
-  if (!suggestedDomain) {
-    return null;
-  }
+  const at = result.suggestion.lastIndexOf("@");
   return {
-    original: trimmed,
-    suggested: `${trimmed.slice(0, at)}@${suggestedDomain}`,
-    domain,
-    suggestedDomain,
+    original: email.replace(/\\@/g, "@").trim(),
+    suggested: result.suggestion,
+    domain: email.replace(/\\@/g, "@").trim().slice(email.replace(/\\@/g, "@").trim().lastIndexOf("@") + 1).toLowerCase(),
+    suggestedDomain: result.suggestion.slice(at + 1),
+    reason: result.reason,
   };
 }
 
 export function parseEmailTypoChoice(message: string) {
   const text = message.trim();
-  if (text === "yes" || /כן.*תקן|לתקן/.test(text) || text === "כן") {
+  if (text === "yes" || /כן.*תקן|לתקן/.test(text) || text === he.studio.setup.emailTypoYes) {
     return "confirm" as const;
   }
-  if (text === "no" || /לא.*השאיר|להשאיר/.test(text) || text === "לא") {
-    return "keep" as const;
+  if (
+    text === "no" ||
+    text === "rewrite" ||
+    /אכתוב מחדש|לא,\s*אכתוב|לא.*השאיר|להשאיר/.test(text) ||
+    text === he.studio.setup.emailTypoRewrite ||
+    text === he.studio.setup.emailTypoRewriteNo
+  ) {
+    return "rewrite" as const;
   }
   return null;
 }
@@ -250,13 +452,22 @@ export function answerLooksParsed(question: SetupQuestion | null, text: string) 
     return true;
   }
   if (question.key === "email_typo") {
-    return parseEmailTypoChoice(message) != null;
+    return parseEmailTypoChoice(message) != null || validateEmail(message).valid;
+  }
+  if (question.key === "company_confirm") {
+    return parseCompanyConfirm(message) != null;
+  }
+  if (question.key === "company_name" || question.key === "recipient_contact" || question.key === "contact_name") {
+    return message.length >= 2;
+  }
+  if (question.key.startsWith("field_type:")) {
+    return parseFieldKind(message) != null;
   }
   if (question.step === "field_types") {
     return parseFieldKind(message) != null;
   }
   if (question.answerType === "email" || question.key === "recipient_email") {
-    return firstEmail(message) != null;
+    return looksLikeEmailAttempt(message) || firstEmail(message) != null;
   }
   if (question.step === "trigger") {
     return parseTriggerType(message) != null;
@@ -265,7 +476,10 @@ export function answerLooksParsed(question: SetupQuestion | null, text: string) 
     return extractWeekday(message) != null;
   }
   if (question.key === "monthly_day") {
-    return extractMonthDay(message, question) != null;
+    return extractMonthDay(message, question) != null || extractBareWeekdayName(message) != null;
+  }
+  if (question.key === "weekday_or_month_day") {
+    return parseWeekdayOrMonthDayChoice(message, null) != null || extractBareWeekdayName(message) != null;
   }
   if (question.key === "once_date") {
     return extractDate(message) != null;
@@ -291,7 +505,13 @@ export function canonicalAnswerForQuestion(question: SetupQuestion, canonical: s
     }
   }
   if (question.key === "email_typo") {
-    return parseEmailTypoChoice(value) ? value : null;
+    return parseEmailTypoChoice(value) ? value : validateEmail(value).valid ? value : null;
+  }
+  if (question.key === "company_confirm") {
+    return parseCompanyConfirm(value) ? value : null;
+  }
+  if (question.key === "company_name" || question.key === "recipient_contact" || question.key === "contact_name") {
+    return value.length >= 2 ? value : null;
   }
   if (question.step === "field_types") {
     return parseFieldKind(value) ? value : null;
@@ -306,7 +526,13 @@ export function canonicalAnswerForQuestion(question: SetupQuestion, canonical: s
     return extractWeekday(value) == null ? null : value;
   }
   if (question.key === "monthly_day") {
+    if (extractBareWeekdayName(value) != null) {
+      return value;
+    }
     return extractMonthDay(value, question) == null ? null : value;
+  }
+  if (question.key === "weekday_or_month_day") {
+    return parseWeekdayOrMonthDayChoice(value, null) || extractBareWeekdayName(value) != null ? value : null;
   }
   if (question.key === "once_date") {
     return extractDate(value);

@@ -33,3 +33,7 @@ export function getAppUrl() {
 export function getDevSchedulesEnabled() {
   return process.env.ENABLE_DEV_SCHEDULES === "true" && process.env.NODE_ENV !== "production";
 }
+
+export function getWorkflowWizardEnabled() {
+  return process.env.ENABLE_WORKFLOW_WIZARD === "true";
+}

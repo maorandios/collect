@@ -7,16 +7,57 @@ import {
   timezoneSchema,
   TIMEZONE,
   WEEKDAY,
-  workflowFieldSchema,
 } from "@/lib/workflow/schema";
 
-const draftRecipientSchema = z.object({
+export const draftContactResolutionSchema = z.enum(["pending", "named", "no_fixed_contact"]);
+
+export const draftRecipientSchema = z.object({
   name: z.string().nullable().optional(),
+  organizationName: z.string().nullable().optional(),
   email: z.string().optional(),
+  contactName: z.string().nullable().optional(),
+  contactResolution: draftContactResolutionSchema.optional(),
+});
+
+export const draftReminderCanonicalSchema = z.discriminatedUnion("state", [
+  z.object({ state: z.literal("unset") }),
+  z.object({ state: z.literal("disabled") }),
+  z.object({
+    state: z.literal("enabled"),
+    afterHours: z.number().positive(),
+  }),
+]);
+
+export const emailEditingStateSchema = z.object({
+  subjectManuallyEdited: z.boolean().default(false),
+  bodyManuallyEdited: z.boolean().default(false),
 });
 
 const draftWeekdaySchema = z.number().int().min(WEEKDAY.sunday).max(WEEKDAY.saturday);
 const draftMonthDaySchema = z.number().int().min(1).max(31);
+
+const draftFieldBase = {
+  id: z.string().min(1),
+  label: z.string().min(1),
+  required: z.boolean(),
+  helpText: z.string().nullable(),
+};
+
+export const draftWorkflowFieldSchema = z.discriminatedUnion("type", [
+  z.object({ ...draftFieldBase, type: z.literal("unconfigured") }),
+  z.object({ ...draftFieldBase, type: z.literal("short_text") }),
+  z.object({ ...draftFieldBase, type: z.literal("long_text") }),
+  z.object({ ...draftFieldBase, type: z.literal("number") }),
+  z.object({ ...draftFieldBase, type: z.literal("date") }),
+  z.object({ ...draftFieldBase, type: z.literal("confirmation") }),
+  z.object({
+    ...draftFieldBase,
+    type: z.literal("file"),
+    allowedMimeTypes: z.array(z.string().min(1)).default([]),
+    maxFiles: z.number().int().positive(),
+    maxFileSizeMb: z.number().positive(),
+  }),
+]);
 
 export const draftScheduleSchema = z.discriminatedUnion("type", [
   z.object({
@@ -39,6 +80,7 @@ export const draftScheduleSchema = z.discriminatedUnion("type", [
     day: draftMonthDaySchema.nullable().optional(),
     time: timeSchema.nullable().optional(),
     timezone: timezoneSchema.default(TIMEZONE),
+    monthlyDayMode: z.enum(["end_of_month", "specific_day"]).optional(),
   }),
   z.object({
     type: z.literal("manual"),
@@ -58,7 +100,7 @@ export const workflowDraftSchema = z.object({
       body: z.string().default(""),
     })
     .default({ subject: "", body: "" }),
-  fields: z.array(workflowFieldSchema).default([]),
+  fields: z.array(draftWorkflowFieldSchema).default([]),
   reminder: z
     .object({
       enabled: z.boolean().default(false),
@@ -67,6 +109,9 @@ export const workflowDraftSchema = z.object({
     })
     .default({ enabled: false, afterHours: null }),
   reminderDecision: z.enum(["unset", "enabled", "declined"]).default("unset"),
+  draftReminder: draftReminderCanonicalSchema.optional(),
+  emailEditingState: emailEditingStateSchema.optional(),
+  intakeRequestId: z.string().min(1).optional(),
   editorLocks: z
     .object({
       name: z.boolean().optional(),
@@ -81,9 +126,19 @@ export const workflowDraftSchema = z.object({
 });
 
 export type WorkflowDraftDefinition = z.output<typeof workflowDraftSchema>;
+export type DraftField = z.output<typeof draftWorkflowFieldSchema>;
+export type DraftFieldType = DraftField["type"];
 export type DraftSchedule = z.output<typeof draftScheduleSchema>;
 export type ReminderDecision = WorkflowDraftDefinition["reminderDecision"];
 export type DraftEditorLocks = WorkflowDraftDefinition["editorLocks"];
+export type DraftReminder = z.output<typeof draftReminderCanonicalSchema>;
+export type DraftRecipient = {
+  organizationName: string | null;
+  contactName: string | null;
+  contactResolution: z.output<typeof draftContactResolutionSchema>;
+  email: string | null;
+};
+export type EmailEditingState = z.output<typeof emailEditingStateSchema>;
 
 export function parseWorkflowDraft(input: unknown) {
   return workflowDraftSchema.safeParse(input);

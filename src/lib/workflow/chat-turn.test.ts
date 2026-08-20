@@ -178,7 +178,21 @@ class MemoryStore implements ChatTurnStore {
     record.draft_definition = setup.proposal;
     record.draft_revision += 1;
     record.setup_revision += 1;
-    record.setup_state = { ...setup, status: "completed" };
+    record.setup_state = {
+      ...setup,
+      status: "completed",
+      conversationMode: "edit",
+      pendingEdit: null,
+      nextQuestion: null,
+      baseDraftRevision: record.draft_revision,
+    };
+    await this.insertMessage({
+      workflowId: input.workflowId,
+      userId: input.userId,
+      clientTurnId: crypto.randomUUID(),
+      role: "assistant",
+      content: he.studio.setup.processBuilt,
+    });
     return { newRevision: record.draft_revision, setupRevision: record.setup_revision, draft: setup.proposal };
   }
 
@@ -230,6 +244,31 @@ async function run(
     mailboxId: "11111111-1111-4111-8111-111111111111",
     mailboxEmail: "office@example.com",
   });
+}
+
+async function answerPendingFieldSetup(
+  store: MemoryStore,
+  workflowId: string | undefined,
+  start: Awaited<ReturnType<typeof run>>,
+) {
+  let current = start;
+  let n = 0;
+  while (n < 12) {
+    const key = current.body.setupState?.nextQuestion?.key ?? current.body.nextQuestions?.[0]?.key ?? "";
+    const message = key.startsWith("field_type:") ? he.studio.setup.fieldTypeFile : null;
+    if (!message || !workflowId) {
+      return current;
+    }
+    n += 1;
+    current = await run(store, {
+      workflowId,
+      message,
+      clientTurnId: `dddddddd-dddd-4ddd-8ddd-${String(n).padStart(12, "0")}`,
+      expectedRevision: 0,
+      expectedSetupRevision: current.body.setupRevision,
+    });
+  }
+  return current;
 }
 
 test("a Hebrew message becomes a structured draft and creates the workflow first", async () => {
@@ -461,8 +500,18 @@ test("a second turn with email and time completes conversation issues without a 
     expectedRevision: 0,
   });
   assert.equal(first.body.draftComplete, false);
-  assert.equal(first.body.nextQuestions?.length, 1);
-  assert.equal(first.body.nextQuestions?.[0]?.answerType, "email");
+  let prepared = await answerPendingFieldSetup(store, first.body.workflowId, first);
+  if (prepared.body.setupState?.nextQuestion?.key === "contact_name") {
+    prepared = await run(store, {
+      workflowId: first.body.workflowId,
+      message: "רוני",
+      clientTurnId: "dddddddd-dddd-4ddd-8ddd-000000000001",
+      expectedRevision: 0,
+      expectedSetupRevision: prepared.body.setupRevision,
+    });
+  }
+  assert.equal(prepared.body.nextQuestions?.length, 1);
+  assert.equal(prepared.body.nextQuestions?.[0]?.answerType, "email");
   assert.equal(store.extractCalls, 1);
 
   const second = await run(store, {
@@ -470,7 +519,7 @@ test("a second turn with email and time completes conversation issues without a 
     message: "roni@example.com בשעה 09:00",
     clientTurnId: otherTurn,
     expectedRevision: 0,
-    expectedSetupRevision: 1,
+    expectedSetupRevision: prepared.body.setupRevision,
   });
   assert.equal(second.body.draft?.recipients.length, 0);
   assert.equal(second.body.setupState?.proposal.recipients.length, 1);
@@ -733,6 +782,66 @@ test("applying a setup proposal succeeds only once", async () => {
   assert.equal(latest?.draft_revision, 1);
   assert.equal(latest?.setup_revision, 1);
   assert.equal((latest?.setup_state as WorkflowSetupState).status, "completed");
+  assert.equal((latest?.setup_state as WorkflowSetupState).conversationMode, "edit");
+  assert.equal(
+    store.messages.some((item) => item.content === he.studio.setup.processBuilt),
+    true,
+  );
+});
+
+test("an edit turn after apply updates the draft without restarting setup", async () => {
+  const store = new MemoryStore();
+  const record = await store.createDraft(userId);
+  const proposal = {
+    ...emptyWorkflowDraft(),
+    name: "איסוף",
+    recipients: [{ name: "שלומי חביבה", organizationName: "געש תעשיות מתכת", email: "gam@gmail.com" }],
+    schedule: { type: "monthly" as const, day: 31, time: "16:00", timezone: "Asia/Jerusalem" as const, monthlyDayMode: "end_of_month" as const },
+    fields: [
+      { id: "a", type: "unconfigured" as const, label: "דוח עובדים", required: true, helpText: null },
+      { id: "b", type: "unconfigured" as const, label: "חשבוניות", required: true, helpText: null },
+    ],
+    reminder: { enabled: true, afterHours: 24 },
+  };
+  record.setup_state = {
+    ...emptySetupState(0, proposal),
+    status: "review",
+    conversationMode: "review",
+    requirements: [
+      { id: "a", label: "דוח עובדים", kind: "ambiguous" },
+      { id: "b", label: "חשבוניות", kind: "file" },
+    ],
+    reminderDecision: "enabled",
+    recipientIdentity: {
+      organizationName: "געש תעשיות מתכת",
+      contactName: "שלומי חביבה",
+      contactResolution: "named",
+      email: "gam@gmail.com",
+    },
+  };
+  await store.applySetupProposal({
+    workflowId: record.id,
+    userId,
+    expectedDraftRevision: 0,
+    expectedSetupRevision: 0,
+  });
+  const edited = await run(store, {
+    workflowId: record.id,
+    message: "תוסיף גם אישור ניהול ספרים",
+    clientTurnId: otherTurn,
+    expectedRevision: 1,
+    expectedSetupRevision: 1,
+  });
+  assert.equal(edited.status, 200);
+  assert.equal(edited.body.setupState?.status, "completed");
+  assert.equal(edited.body.setupState?.conversationMode, "edit");
+  assert.equal(edited.body.draft?.fields.length, 3);
+  assert.equal(edited.body.draft?.fields.at(-1)?.type, "unconfigured");
+  assert.equal(edited.body.draft?.fields.at(-1)?.label, "אישור ניהול ספרים");
+  assert.match(edited.body.assistantMessage ?? "", /הוספתי את „אישור ניהול ספרים”/);
+  assert.equal(edited.body.assistantMessage?.includes("מה שם איש הקשר"), false);
+  assert.equal(store.messages.filter((item) => item.role === "user").length >= 1, true);
+  assert.equal(store.messages.some((item) => item.content === he.studio.setup.processBuilt), true);
 });
 
 test("a deterministic alias does not call Luna interpret", async () => {
@@ -755,7 +864,7 @@ test("a deterministic alias does not call Luna interpret", async () => {
   assert.equal(store.extractCalls, 1);
   const second = await run(store, {
     workflowId: first.body.workflowId,
-    message: "קבצים",
+    message: "ישראל ישראלי",
     clientTurnId: otherTurn,
     expectedRevision: 0,
     expectedSetupRevision: 1,
@@ -766,6 +875,7 @@ test("a deterministic alias does not call Luna interpret", async () => {
   assert.equal(store.extractCalls, 1);
   assert.equal(second.body.draft?.fields.length, 0);
   assert.equal(second.body.setupState?.proposal.fields.length, 2);
+  assert.equal(second.body.setupState?.nextQuestion?.key, "recipient_email");
 });
 
 test("a quick-reply label uses the same chat route as typed text", async () => {
@@ -787,7 +897,7 @@ test("a quick-reply label uses the same chat route as typed text", async () => {
   );
   const second = await run(store, {
     workflowId: first.body.workflowId,
-    message: he.studio.setup.fieldTypeFile,
+    message: he.studio.setup.noFixedContact,
     clientTurnId: otherTurn,
     expectedRevision: 0,
     expectedSetupRevision: 1,
@@ -795,7 +905,7 @@ test("a quick-reply label uses the same chat route as typed text", async () => {
   assert.equal(second.status, 200);
   assert.equal(second.body.aiUsed, false);
   assert.equal(store.extractCalls, 1);
-  assert.equal(second.body.setupState?.proposal.fields.some((field) => field.type === "file"), true);
+  assert.equal(second.body.setupState?.recipientIdentity.contactResolution, "no_fixed_contact");
 });
 
 test("Luna fallback understands a phrasing that is not an alias", async () => {
@@ -803,7 +913,7 @@ test("Luna fallback understands a phrasing that is not an alias", async () => {
   const first = await run(
     store,
     {
-      message: "חשבונית ואישור פיקוח",
+      message: "חשבונית ואישור פיקוח מגעש, איש הקשר דוד כהן, המייל dave@gaash.com",
       clientTurnId: turnId,
       expectedRevision: 0,
     },
@@ -813,13 +923,16 @@ test("Luna fallback understands a phrasing that is not an alias", async () => {
           { label: "חשבונית", kind: "file", filePreset: "pdf" },
           { label: "אישור פיקוח", kind: "ambiguous", filePreset: null },
         ],
+        contactPerson: { value: "דוד כהן", evidence: "איש הקשר דוד כהן" },
+        recipientEmail: "dave@gaash.com",
+        companyName: "געש",
       }),
   );
   const second = await runWorkflowChatTurn({
     userId,
     body: {
       workflowId: first.body.workflowId,
-      message: "בפורמט סרוק בבקשה",
+      message: "כשזה מתאים לנו",
       clientTurnId: otherTurn,
       expectedRevision: 0,
       expectedSetupRevision: 1,
@@ -834,9 +947,9 @@ test("Luna fallback understands a phrasing that is not an alias", async () => {
       },
       interpretAnswer: async ({ userMessage }) => {
         store.extractCalls += 1;
-        assert.equal(userMessage, "בפורמט סרוק בבקשה");
+        assert.equal(userMessage, "כשזה מתאים לנו");
         return {
-          interpretation: { understood: true, canonicalValue: "file", confidence: 0.91 },
+          interpretation: { understood: true, canonicalValue: "monthly", confidence: 0.91 },
           usage: { model: "gpt-5.6-luna", latencyMs: 18, inputTokens: 36, outputTokens: 10, fallback: false },
         };
       },
@@ -847,6 +960,6 @@ test("Luna fallback understands a phrasing that is not an alias", async () => {
   assert.equal(second.status, 200);
   assert.equal(second.body.aiUsed, true);
   assert.equal(store.extractCalls, 2);
-  assert.equal(second.body.setupState?.proposal.fields.length, 2);
+  assert.equal(second.body.setupState?.proposal.schedule?.type, "monthly");
   assert.equal(second.body.draft?.fields.length, 0);
 });

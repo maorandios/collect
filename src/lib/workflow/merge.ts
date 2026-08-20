@@ -259,11 +259,12 @@ export function mergeWorkflowDraft({
       const name = incoming.name?.trim() || null;
       const email = incoming.email?.trim() ?? "";
       if (email && looksLikeEmail(email) && emailAllowed(email, userMessage, previousEmails)) {
-        return { name, email };
+        return { name, organizationName: incoming.organizationName ?? previousByName.get(name ?? "")?.organizationName ?? null, email };
       }
       const previous = name ? previousByName.get(name) : undefined;
       return {
         name: name ?? previous?.name ?? null,
+        organizationName: incoming.organizationName ?? previous?.organizationName ?? null,
         email: previous?.email ?? "",
       };
     });
@@ -277,11 +278,11 @@ export function mergeWorkflowDraft({
   let fields = surviving;
   if (result.fields && !fieldsLocked) {
     const used = new Set<string>();
-    const mergedFields: WorkflowField[] = [];
+    const mergedFields: WorkflowDraftDefinition["fields"] = [];
     for (const incoming of result.fields) {
       const existing = incoming.id ? survivingById.get(incoming.id) : undefined;
       if (existing) {
-        mergedFields.push(mergeField(existing, incoming, userMessage));
+        mergedFields.push(existing.type === "unconfigured" ? existing : mergeField(existing, incoming, userMessage));
         used.add(existing.id);
       } else {
         mergedFields.push(newField(incoming, createId(), userMessage));
@@ -336,6 +337,9 @@ export function mergeWorkflowDraft({
         }
       : current.reminder,
     reminderDecision: current.reminderDecision ?? "unset",
+    emailEditingState: current.emailEditingState,
+    draftReminder: current.draftReminder,
+    intakeRequestId: current.intakeRequestId,
     editorLocks: current.editorLocks ?? {},
   };
   return applyUserFacts(merged, userMessage);

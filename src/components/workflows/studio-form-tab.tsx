@@ -6,10 +6,11 @@ import { FormRenderer } from "@/components/forms/form-renderer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { he } from "@/lib/i18n/he";
+import { configuredFields, isUnconfiguredField } from "@/lib/workflow/draft-fields";
+import type { DraftField, WorkflowDraftDefinition } from "@/lib/workflow/draft-schema";
 import { buildFieldFromEditor, validateFieldEditor, type FieldEditorInput } from "@/lib/workflow/field-editor";
-import type { WorkflowDraftDefinition } from "@/lib/workflow/draft-schema";
 import type { EditorLockKey } from "@/lib/workflow/editor-locks";
-import { FILE_PRESET_IDS, filePresetFromMimeTypes, type FilePresetId } from "@/lib/workflow/file-presets";
+import { fileLimitsSimpleLabel } from "@/lib/workflow/studio-display";
 import type { WorkflowField } from "@/lib/workflow/schema";
 
 const SELECT_CLASS =
@@ -24,6 +25,15 @@ const FIELD_TYPES: Array<WorkflowField["type"]> = [
   "file",
 ];
 
+const UNCONFIGURED_TYPE_CHOICES: Array<{ type: WorkflowField["type"]; label: string }> = [
+  { type: "file", label: he.studio.setup.inputTypeFile },
+  { type: "short_text", label: he.studio.setup.inputTypeShortText },
+  { type: "long_text", label: he.studio.setup.inputTypeLongText },
+  { type: "number", label: he.studio.setup.inputTypeNumber },
+  { type: "date", label: he.studio.setup.inputTypeDate },
+  { type: "confirmation", label: he.studio.setup.inputTypeConfirmation },
+];
+
 export function StudioFormTab({
   draft,
   senderName,
@@ -33,13 +43,14 @@ export function StudioFormTab({
   draft: WorkflowDraftDefinition;
   senderName: string;
   readOnly: boolean;
-  onEdit: (draft: WorkflowDraftDefinition, locks: EditorLockKey[]) => void;
+  onEdit: (draft: WorkflowDraftDefinition, locks: EditorLockKey[]) => void | Promise<boolean>;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const previewFields = configuredFields(draft.fields);
 
-  function commit(fields: WorkflowField[]) {
+  function commit(fields: DraftField[]) {
     onEdit({ ...draft, fields }, ["fields"]);
   }
 
@@ -59,6 +70,19 @@ export function StudioFormTab({
     commit(next);
   }
 
+  function assignType(field: DraftField, type: WorkflowField["type"]) {
+    const next = buildFieldFromEditor(
+      {
+        type,
+        label: field.label,
+        required: field.required,
+        helpText: field.helpText ?? "",
+      },
+      field.id,
+    );
+    commit(draft.fields.map((item) => (item.id === field.id ? next : item)));
+  }
+
   return (
     <div className="space-y-6">
       <FormRenderer
@@ -67,14 +91,82 @@ export function StudioFormTab({
         definition={{
           name: draft.name,
           email: draft.email,
-          fields: draft.fields,
+          fields: previewFields,
         }}
       />
       <div className="space-y-3">
-        {draft.fields.map((field, index) => (
+        {draft.fields.map((field, index) =>
+          isUnconfiguredField(field) ? (
+            <div key={field.id} className="rounded-xl border border-border bg-muted/70 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-medium">{field.label || he.studio.notSet}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{he.studio.setup.chooseInputType}</p>
+                </div>
+                {readOnly ? null : (
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" variant="ghost" className="h-8" onClick={() => move(index, -1)}>
+                      {he.studio.moveUp}
+                    </Button>
+                    <Button type="button" variant="ghost" className="h-8" onClick={() => move(index, 1)}>
+                      {he.studio.moveDown}
+                    </Button>
+                    {pendingDelete === field.id ? (
+                      <>
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          className="h-8"
+                          onClick={() => {
+                            commit(draft.fields.filter((item) => item.id !== field.id));
+                            setPendingDelete(null);
+                          }}
+                        >
+                          {he.studio.deleteField}
+                        </Button>
+                        <Button type="button" variant="ghost" className="h-8" onClick={() => setPendingDelete(null)}>
+                          {he.actions.cancel}
+                        </Button>
+                      </>
+                    ) : (
+                      <Button type="button" variant="ghost" className="h-8" onClick={() => setPendingDelete(field.id)}>
+                        {he.studio.deleteField}
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+              {pendingDelete === field.id ? <p className="mt-2 text-xs text-destructive">{he.studio.confirmDeleteField}</p> : null}
+              {readOnly ? null : (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {UNCONFIGURED_TYPE_CHOICES.map((choice) => (
+                    <Button
+                      key={choice.type}
+                      type="button"
+                      variant="outline"
+                      className="h-8"
+                      onClick={() => assignType(field, choice.type)}
+                    >
+                      {choice.label}
+                    </Button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
           <div key={field.id} className="rounded-xl border border-border bg-surface p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-medium">{field.label || he.studio.notSet}</p>
+              <div>
+                <p className="text-sm font-medium">{field.label || he.studio.notSet}</p>
+                {field.type === "file" ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {fileLimitsSimpleLabel({
+                      allowedMimeTypes: field.allowedMimeTypes,
+                      maxFileSizeMb: field.maxFileSizeMb,
+                    })}
+                  </p>
+                ) : null}
+              </div>
               {readOnly ? null : (
                 <div className="flex flex-wrap gap-2">
                   <Button type="button" variant="ghost" className="h-8" onClick={() => move(index, -1)}>
@@ -128,7 +220,8 @@ export function StudioFormTab({
               />
             ) : null}
           </div>
-        ))}
+          ),
+        )}
         {readOnly ? null : (
           <Button type="button" variant="outline" className="h-10" onClick={() => setAdding(true)}>
             {he.studio.addField}
@@ -170,7 +263,6 @@ function FieldEditorDialog({
               label: field.label,
               required: field.required,
               helpText: field.helpText ?? "",
-              filePreset: field.type === "file" ? filePresetFromMimeTypes(field.allowedMimeTypes) : undefined,
               maxFiles: field.type === "file" ? field.maxFiles : undefined,
               maxFileSizeMb: field.type === "file" ? field.maxFileSizeMb : undefined,
             });
@@ -205,9 +297,6 @@ function FieldEditor({
   const [required, setRequired] = useState(field?.required ?? true);
   const [helpText, setHelpText] = useState(field?.helpText ?? "");
   const [localError, setLocalError] = useState<string | null>(error ?? null);
-  const [preset, setPreset] = useState<FilePresetId>(
-    field?.type === "file" ? filePresetFromMimeTypes(field.allowedMimeTypes) : "all",
-  );
   const [maxFiles, setMaxFiles] = useState(field?.type === "file" ? field.maxFiles : 1);
   const [maxFileSizeMb, setMaxFileSizeMb] = useState(field?.type === "file" ? field.maxFileSizeMb : 10);
 
@@ -217,7 +306,6 @@ function FieldEditor({
       label,
       required,
       helpText,
-      filePreset: preset,
       maxFiles,
       maxFileSizeMb,
     };
@@ -247,21 +335,6 @@ function FieldEditor({
       <Input className="h-10" value={helpText} onChange={(event) => setHelpText(event.target.value)} placeholder={he.studio.helpTextLabel} />
       {type === "file" ? (
         <>
-          <select className={SELECT_CLASS} value={preset} onChange={(event) => setPreset(event.target.value as FilePresetId)}>
-            {FILE_PRESET_IDS.map((id) => (
-              <option key={id} value={id}>
-                {id === "all"
-                  ? he.studio.filePresetAll
-                  : id === "pdf"
-                    ? he.studio.filePresetPdf
-                    : id === "excel"
-                      ? he.studio.filePresetExcel
-                      : id === "images"
-                        ? he.studio.filePresetImages
-                        : he.studio.filePresetVideo}
-              </option>
-            ))}
-          </select>
           <Input
             className="h-10"
             type="number"

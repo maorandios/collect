@@ -1,9 +1,19 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { scheduleLabel, WEEKDAY, WEEKDAY_LABELS, weekdayLabel } from "./labels";
+import { formatReminderDelayHe, scheduleLabel, WEEKDAY, WEEKDAY_LABELS, weekdayLabel } from "./labels";
 import { computeNextRunAt, formatJerusalemYmd, jerusalemWallTimeToUtc } from "./next-run";
 import { parseWorkflowDefinition, type WorkflowDefinition } from "../workflow/schema";
+
+test("formatReminderDelayHe uses human units instead of raw hours", () => {
+  assert.equal(formatReminderDelayHe(1), "אחרי שעה");
+  assert.equal(formatReminderDelayHe(2), "אחרי שעתיים");
+  assert.equal(formatReminderDelayHe(24), "אחרי יום");
+  assert.equal(formatReminderDelayHe(48), "אחרי יומיים");
+  assert.equal(formatReminderDelayHe(72), "אחרי 3 ימים");
+  assert.equal(formatReminderDelayHe(168), "אחרי שבוע");
+  assert.equal(formatReminderDelayHe(336), "אחרי שבועיים");
+});
 
 test("Hebrew weekday labels match 0=Sunday … 6=Saturday", () => {
   assert.equal(WEEKDAY.sunday, 0);

@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { he } from "@/lib/i18n/he";
 import { setupProgress } from "@/lib/workflow/setup-flow";
 import { pendingNeedsAi as setupPendingNeedsAi } from "@/lib/workflow/setup-agent";
-import type { WorkflowSetupState } from "@/lib/workflow/setup-state";
+import { conversationModeOf, type WorkflowSetupState } from "@/lib/workflow/setup-state";
 import type { WorkflowStatus } from "@/lib/workflow/lifecycle";
 import type { StudioMessage } from "@/lib/workflow/studio-state";
 import { cn } from "@/lib/utils";
@@ -80,6 +80,8 @@ export function StudioChatPane({
   const lastUser = [...messages].reverse().find((item) => item.role === "user");
   const showRetry = lastMessage?.role === "error" && !pending && !readOnly;
   const showReview = !pending && setupState?.status === "review";
+  const conversationMode = setupState ? conversationModeOf(setupState) : "setup";
+  const showProgress = Boolean(setupState && messages.length > 0 && conversationMode !== "edit");
   const waitingForAi = pending && setupPendingNeedsAi(setupState, messages.length > 0, lastUser?.content);
   const quickReplyOptions =
     !pending &&
@@ -95,13 +97,15 @@ export function StudioChatPane({
   }, [messages, pending, showReview]);
 
   const placeholder =
-    setupState?.nextQuestion && setupState.status !== "review"
-      ? setupState.nextQuestion.question
-      : he.studio.composerPlaceholder;
+    conversationMode === "edit"
+      ? he.studio.setup.composerEditPlaceholder
+      : setupState?.nextQuestion && setupState.status !== "review"
+        ? setupState.nextQuestion.question
+        : he.studio.composerPlaceholder;
 
   return (
     <section className="flex h-full min-h-0 min-w-0 flex-[2] flex-col overflow-hidden border-e border-border bg-surface">
-      {setupState && messages.length > 0 ? <SetupProgress setup={setupState} /> : null}
+      {showProgress && setupState ? <SetupProgress setup={setupState} /> : null}
       <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
         <div className="mt-auto flex flex-col gap-3 px-5 py-6">
           {messages.length === 0 && !pending ? (

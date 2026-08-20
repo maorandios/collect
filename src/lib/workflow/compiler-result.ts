@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const compilerRecipientSchema = z.object({
   name: z.string().nullable(),
+  organizationName: z.string().nullable().optional(),
   email: z.string().nullable(),
 });
 

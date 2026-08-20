@@ -1,3 +1,4 @@
+import { formatReminderDelayHe } from "@/lib/schedule/labels";
 import { he } from "@/lib/i18n/he";
 import { computeUpcomingRuns, formatIsraelDateTime } from "@/lib/dates";
 import { scheduleLabel } from "@/lib/schedule/labels";
@@ -76,11 +77,8 @@ export function PreviewPanel({
       <section className="space-y-1 text-sm">
         <p className="text-muted-foreground">{he.workflow.reminder}</p>
         <p>
-          {definition.reminder.enabled
-            ? he.workflow.reminderOn.replace(
-                "{hours}",
-                String(definition.reminder.afterHours ?? ""),
-              )
+          {definition.reminder.enabled && definition.reminder.afterHours
+            ? `תזכורת ${formatReminderDelayHe(definition.reminder.afterHours)}`
             : he.workflow.reminderOff}
         </p>
       </section>

@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { he } from "@/lib/i18n/he";
 import { getRecipientRequest } from "@/lib/requests/recipient";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { resolvedAllowedMimeTypes } from "@/lib/workflow/file-formats";
 
 export async function POST(request: Request) {
   const requestRow = await getRecipientRequest();
@@ -30,7 +31,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: he.validation.required }, { status: 400 });
   }
 
-  if (!field.allowedMimeTypes.includes(body.mimeType)) {
+  if (!resolvedAllowedMimeTypes(field.allowedMimeTypes).includes(body.mimeType)) {
     return NextResponse.json({ message: he.recipient.fileType }, { status: 400 });
   }
 

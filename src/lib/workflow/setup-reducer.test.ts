@@ -8,10 +8,13 @@ import { emptySetupExtraction } from "./setup-extraction";
 import { extractPersonName, parseTriggerType } from "./setup-parse";
 import { classifyReviewChange, reduceSetupAnswer } from "./setup-reducer";
 import { leftPaneDraft, leftPaneIsEmpty, leftPaneShowsPendingBanner } from "./setup-ui";
+import { buildSetupReviewModel } from "./setup-review";
+import { parseWorkflowSetupState } from "./setup-state";
 import { validateProposalSemantics } from "./setup-validate";
 import type { WorkflowSetupState } from "./setup-state";
 import { getCompletionState } from "./completion";
 import { he } from "@/lib/i18n/he";
+import { setupAssistantMustNotAddressUserAs } from "./setup-copy";
 
 function collecting(overrides: Partial<WorkflowSetupState> = {}): WorkflowSetupState {
   const started = startSetup(0, emptyWorkflowDraft());
@@ -155,21 +158,18 @@ test("none of email, time, or weekday creates a file field", () => {
   }
 });
 
-test("a field type answer does not create another field", () => {
+test("a field type is not asked during setup", () => {
   const started = startSetup(0, emptyWorkflowDraft());
   const first = applySetupUserTurn({
     current: started,
     userMessage: "חשבונית ואישור פיקוח",
   });
   const fieldCount = first.setup.proposal.fields.length;
-  const second = applySetupUserTurn({
-    current: first.setup,
-    userMessage: "קובץ",
-  });
-  assert.equal(second.setup.requirements.filter((item) => item.kind === "ambiguous").length, 0);
-  assert.equal(second.setup.proposal.fields.length, 2);
-  assert.ok(second.setup.proposal.fields.length >= fieldCount);
-  const ids = second.setup.proposal.fields.map((field) => field.id);
+  assert.equal(fieldCount, 2);
+  assert.equal(first.setup.proposal.fields.every((field) => field.type === "unconfigured"), true);
+  assert.equal(first.setup.nextQuestion?.key, "contact_name");
+  assert.equal(first.assistantMessage.includes("איך תרצה לקבל"), false);
+  const ids = first.setup.proposal.fields.map((field) => field.id);
   assert.equal(new Set(ids).size, ids.length);
 });
 
@@ -326,6 +326,7 @@ test("heuristic full-sentence item does not duplicate extracted requirements", (
 test("מנהל פרויקט is not extracted as a recipient named נהל", () => {
   assert.equal(extractPersonName("צריך לאסוף פירוט חומרי גלם ואישור מנהל פרויקט"), null);
   assert.equal(extractPersonName("אסוף סיכום מרוני"), "רוני");
+  assert.equal(extractPersonName("שלח לרוני בקשה לסיכום העבודה"), "רוני");
 });
 
 test("an extracted email label is not stored as a requirement or field", () => {
@@ -375,7 +376,8 @@ test("the guided hours-report setup keeps two fields and does not write the draf
   });
   assert.equal(first.setup.requirements.length, 2);
   assert.equal(first.setup.requirements.map((item) => item.label).join(","), "דוח שעות עובדים,אישור מנהל האתר");
-  assert.equal(first.setup.proposal.fields.length, 1);
+  assert.equal(first.setup.proposal.fields.length, 2);
+  assert.equal(first.setup.proposal.fields.every((field) => field.type === "unconfigured"), true);
   assert.equal(
     first.setup.proposal.fields.some((field) => /אימייל|יום|שעה/.test(field.label)),
     false,
@@ -386,16 +388,13 @@ test("the guided hours-report setup keeps two fields and does not write the draf
   assert.equal(leftPaneDraft(blankDraft), blankDraft);
   assert.notEqual(leftPaneDraft(blankDraft), first.setup.proposal);
 
-  const files = applySetupUserTurn({ current: first.setup, userMessage: "קבצים" });
-  assert.equal(files.invalid, false);
-  assert.equal(files.setup.proposal.fields.length, 2);
-  assert.equal(files.setup.proposal.fields.every((field) => field.type === "file"), true);
-
-  const typo = applySetupUserTurn({ current: files.setup, userMessage: "maor.andios@gmial.com" });
+  const typo = applySetupUserTurn({ current: first.setup, userMessage: "maor.andios@gmial.com" });
   assert.equal(typo.setup.pendingEmailCorrection?.suggestedDomain, "gmail.com");
   assert.equal(typo.setup.proposal.recipients[0]?.email, "");
   assert.equal(typo.setup.nextQuestion?.key, "email_typo");
-  assert.match(typo.assistantMessage, /gmial\.com/);
+  assert.match(typo.assistantMessage, /נראה שיש טעות ב־Gmail/);
+  assert.match(typo.assistantMessage, /maor\.andios@gmail\.com/);
+  assert.equal(typo.assistantMessage.includes("gmial"), false);
   assert.equal(typo.setup.completedSteps.includes("recipient"), false);
 
   const confirm = applySetupUserTurn({ current: typo.setup, userMessage: he.studio.setup.emailTypoYes });
@@ -444,18 +443,17 @@ test("email, day, time, and reminder answers do not mutate fields", () => {
     userMessage: HOURS_MESSAGE,
     extraction: hoursExtraction(),
   });
-  const files = applySetupUserTurn({ current: first.setup, userMessage: "קבצים" });
-  const before = JSON.stringify(files.setup.proposal.fields);
+  const before = JSON.stringify(first.setup.proposal.fields);
   for (const answer of ["maor.andios@gmail.com", "פעם בשבוע", "בימי ראשון", "8", "כן לאחר יום"]) {
     const latest = applySetupUserTurn({
-      current: files.setup,
+      current: first.setup,
       userMessage: answer,
     });
     if (latest.setup.proposal.fields.length) {
       assert.equal(JSON.stringify(latest.setup.proposal.fields) === before || latest.setup.proposal.fields.length === 2, true);
     }
   }
-  assert.equal(files.setup.proposal.fields.length, 2);
+  assert.equal(first.setup.proposal.fields.length, 2);
 });
 
 test("first hours-report turn does not invent a schedule from extraction", () => {
@@ -471,7 +469,8 @@ test("first hours-report turn does not invent a schedule from extraction", () =>
     },
   });
   assert.equal(first.setup.proposal.schedule, undefined);
-  assert.equal(first.setup.nextQuestion?.step, "field_types");
+  assert.equal(first.setup.nextQuestion?.key, "recipient_email");
+  assert.equal(first.assistantMessage.includes("איך תרצה לקבל"), false);
 });
 
 test("the left pane never reads the proposal before apply", () => {
@@ -492,4 +491,324 @@ test("the left pane never reads the proposal before apply", () => {
   };
   assert.equal(leftPaneShowsPendingBanner(first.setup, existing), true);
   assert.equal(leftPaneDraft(existing).name, "תהליך קיים");
+});
+
+const GAASH_MESSAGE = "קבלת חשבוניות + קבלות + אישור ניכוי מס במקור של חברת געש מתכות בעמ באופן חודשי";
+
+test("gaash metals setup asks for a contact, keeps monthly, and lists every document in the email", () => {
+  const started = startSetup(0, emptyWorkflowDraft());
+  const first = applySetupUserTurn({
+    current: started,
+    userMessage: GAASH_MESSAGE,
+    extraction: {
+      ...emptySetupExtraction(),
+      items: [
+        { label: "חשבוניות", kind: "file", filePreset: "all" },
+        { label: "קבלות", kind: "file", filePreset: "all" },
+        { label: "אישור ניכוי מס במקור", kind: "ambiguous", filePreset: null },
+      ],
+      companyName: "תכות בעמ",
+      recipientName: "תכות בעמ",
+      scheduleType: "monthly",
+      emailSubject: "בקשה לחשבוניות",
+      emailBody: "נא לצרף את החשבוניות ואת הקבלות.",
+    },
+  });
+  assert.equal(first.setup.proposal.fields.length, 3);
+  assert.equal(first.setup.proposal.fields.every((field) => field.type === "unconfigured"), true);
+  assert.equal(first.setup.proposal.recipients[0]?.organizationName, "געש מתכות בע״מ");
+  assert.equal(first.setup.proposal.recipients[0]?.name, "");
+  assert.equal(first.setup.proposal.schedule?.type, "monthly");
+  assert.equal(first.setup.nextQuestion?.key, "contact_name");
+  assert.match(first.assistantMessage, /געש מתכות בע״מ/);
+  assert.equal(leftPaneIsEmpty(first.setup, emptyWorkflowDraft()), true);
+
+  assert.equal(first.setup.nextQuestion?.options?.some((option) => option.label === he.studio.setup.noFixedContact), true);
+
+  const contact = applySetupUserTurn({ current: first.setup, userMessage: "ישראל ישראלי" });
+  assert.equal(contact.setup.proposal.recipients[0]?.name, "ישראל ישראלי");
+  assert.equal(contact.setup.proposal.recipients[0]?.organizationName, "געש מתכות בע״מ");
+  assert.equal(contact.setup.nextQuestion?.key, "recipient_email");
+  assert.equal(contact.setup.nextQuestion?.question, he.studio.setup.askRecipientEmail);
+  assert.equal(contact.setup.proposal.fields.length, 3);
+
+  const email = applySetupUserTurn({ current: contact.setup, userMessage: "gaash@gmail.com" });
+  assert.equal(email.setup.proposal.recipients[0]?.email, "gaash@gmail.com");
+  assert.equal(email.setup.proposal.recipients[0]?.name, "ישראל ישראלי");
+  assert.equal(email.setup.nextQuestion?.key, "monthly_day");
+
+  const day = applySetupUserTurn({ current: email.setup, userMessage: "28" });
+  const time = applySetupUserTurn({ current: day.setup, userMessage: "8" });
+  const reminder = applySetupUserTurn({ current: time.setup, userMessage: "אחרי יומיים" });
+  assert.equal(reminder.setup.status, "review");
+  assert.equal(reminder.setup.nextQuestion?.key, "review");
+  assert.equal(reminder.setup.proposal.email.subject, "בקשה למסמכים חודשיים");
+  assert.match(reminder.setup.proposal.email.body, /• חשבוניות/);
+  assert.match(reminder.setup.proposal.email.body, /• קבלות/);
+  assert.match(reminder.setup.proposal.email.body, /• אישור ניכוי מס במקור/);
+  assert.equal(reminder.setup.proposal.email.body.includes("\\"), false);
+  assert.equal(leftPaneIsEmpty(reminder.setup, emptyWorkflowDraft()), true);
+  assert.equal(leftPaneDraft(emptyWorkflowDraft()).fields.length, 0);
+});
+
+const NISSIM_MESSAGE = 'קבלת חשבוניות + קבלות + תדפיסי בנק כל חודש מחברת ניסים נכסים בע"מ';
+
+test("nissim nekassim first turn is monthly and skips the cadence question", () => {
+  const started = startSetup(0, emptyWorkflowDraft());
+  const first = applySetupUserTurn({ current: started, userMessage: NISSIM_MESSAGE });
+  assert.equal(first.setup.proposal.recipients[0]?.organizationName, "ניסים נכסים בע״מ");
+  assert.equal(first.setup.proposal.fields.length, 3);
+  assert.deepEqual(
+    first.setup.proposal.fields.map((field) => field.label),
+    ["חשבוניות", "קבלות", "תדפיסי בנק"],
+  );
+  assert.equal(first.setup.proposal.fields.every((field) => field.type === "unconfigured"), true);
+  assert.deepEqual(first.setup.proposal.schedule, {
+    type: "monthly",
+    day: null,
+    time: null,
+    timezone: TIMEZONE,
+  });
+  assert.notEqual(first.setup.nextQuestion?.key, "trigger");
+  assert.equal(first.setup.nextQuestion?.key, "contact_name");
+  assert.match(first.assistantMessage, /מעולה — בכל חודש נאסוף מניסים נכסים בע״מ/);
+  assert.match(first.assistantMessage, /חשבוניות/);
+  assert.match(first.assistantMessage, /קבלות/);
+  assert.match(first.assistantMessage, /תדפיסי בנק/);
+  assert.match(first.assistantMessage, /מה שם איש הקשר בחברה/);
+  assert.equal(first.assistantMessage.includes("באילו פורמטים"), false);
+  assert.equal(first.assistantMessage.startsWith("הבנתי"), false);
+  assert.equal(leftPaneIsEmpty(first.setup, emptyWorkflowDraft()), true);
+
+  const contact = applySetupUserTurn({ current: first.setup, userMessage: "דוד כהן" });
+  assert.equal(contact.setup.proposal.recipients[0]?.name, "דוד כהן");
+  assert.equal(contact.setup.nextQuestion?.key, "recipient_email");
+  assert.equal(setupAssistantMustNotAddressUserAs(contact.assistantMessage, "דוד כהן"), true);
+  assert.match(contact.assistantMessage, /מעולה\. לאיזו כתובת מייל נשלח את הבקשה/);
+
+  const email = applySetupUserTurn({ current: contact.setup, userMessage: "gmail22@gmail.com" });
+  assert.equal(email.setup.proposal.recipients[0]?.email, "gmail22@gmail.com");
+  assert.equal(email.setup.nextQuestion?.key, "monthly_day");
+  assert.match(email.assistantMessage, /באיזה תאריך בחודש לשלוח/);
+  assert.match(email.assistantMessage, /1 ל־31/);
+  assert.equal(email.setup.nextQuestion?.options?.some((option) => option.label === "סוף החודש"), true);
+
+  const day = applySetupUserTurn({ current: email.setup, userMessage: "21" });
+  assert.equal(day.setup.proposal.schedule && "day" in day.setup.proposal.schedule ? day.setup.proposal.schedule.day : null, 21);
+  assert.equal(day.setup.nextQuestion?.key, "monthly_time");
+  assert.equal(day.assistantMessage, he.studio.setup.askTimeFollowUp);
+
+  const time = applySetupUserTurn({ current: day.setup, userMessage: "9" });
+  assert.equal(time.setup.proposal.schedule && "time" in time.setup.proposal.schedule ? time.setup.proposal.schedule.time : null, "09:00");
+  assert.equal(time.setup.nextQuestion?.key, "reminder");
+  assert.match(time.assistantMessage, /קבעתי את השליחה ל־21 בכל חודש בשעה 09:00/);
+  assert.match(time.assistantMessage, /מתי לשלוח תזכורת/);
+
+  const reminder = applySetupUserTurn({ current: time.setup, userMessage: "אחרי יום" });
+  assert.equal(reminder.setup.status, "review");
+  assert.equal(reminder.setup.nextQuestion?.key, "review");
+  assert.equal(reminder.assistantMessage, he.studio.setup.reviewPrompt);
+  assert.match(reminder.setup.proposal.email.body, /\n/);
+  assert.match(reminder.setup.proposal.email.body, /• חשבוניות/);
+  assert.match(reminder.setup.proposal.email.body, /• קבלות/);
+  assert.match(reminder.setup.proposal.email.body, /• תדפיסי בנק/);
+  assert.equal(reminder.setup.proposal.email.body.includes("\\"), false);
+  assert.equal(reminder.setup.proposal.recipients[0]?.email, "gmail22@gmail.com");
+  assert.equal(leftPaneIsEmpty(reminder.setup, emptyWorkflowDraft()), true);
+});
+
+test("cadence phrases in a first message skip the trigger question", () => {
+  const phrases = [
+    ["תשלח כל חודש", "monthly"],
+    ["בקשה חודשית", "monthly"],
+    ["פעם בחודש", "monthly"],
+    ["מדי חודש", "monthly"],
+    ["בכל חודש", "monthly"],
+    ["תהליך שבועי", "weekly"],
+    ["כל שבוע", "weekly"],
+    ["פעם בשבוע", "weekly"],
+  ] as const;
+  for (const [phrase, type] of phrases) {
+    const result = applySetupUserTurn({
+      current: startSetup(0, emptyWorkflowDraft()),
+      userMessage: `קבלת חשבוניות ${phrase}`,
+    });
+    assert.equal(result.setup.proposal.schedule?.type, type, phrase);
+    assert.notEqual(result.setup.nextQuestion?.key, "trigger", phrase);
+  }
+});
+
+test("שלישי on a monthly date question asks for clarification instead of erroring", () => {
+  const started = startSetup(0, emptyWorkflowDraft());
+  const first = applySetupUserTurn({ current: started, userMessage: NISSIM_MESSAGE });
+  const contact = applySetupUserTurn({ current: first.setup, userMessage: "דוד כהן" });
+  const email = applySetupUserTurn({ current: contact.setup, userMessage: "gmail22@gmail.com" });
+  const ambiguous = applySetupUserTurn({ current: email.setup, userMessage: "שלישי" });
+  assert.equal(ambiguous.invalid, false);
+  assert.equal(ambiguous.setup.nextQuestion?.key, "weekday_or_month_day");
+  assert.match(ambiguous.assistantMessage, /רק כדי לדייק/);
+  assert.match(ambiguous.assistantMessage, /יום שלישי בכל שבוע/);
+  assert.match(ambiguous.assistantMessage, /3 בחודש/);
+  assert.equal(ambiguous.setup.proposal.schedule?.type, "monthly");
+  assert.equal(
+    ambiguous.setup.proposal.schedule && "day" in ambiguous.setup.proposal.schedule
+      ? ambiguous.setup.proposal.schedule.day
+      : undefined,
+    null,
+  );
+
+  const weekly = applySetupUserTurn({ current: ambiguous.setup, userMessage: "יום שלישי בכל שבוע" });
+  assert.equal(weekly.setup.proposal.schedule?.type, "weekly");
+  assert.equal(
+    weekly.setup.proposal.schedule && "weekday" in weekly.setup.proposal.schedule
+      ? weekly.setup.proposal.schedule.weekday
+      : null,
+    2,
+  );
+});
+
+const INDUSTRIES_MESSAGE = "קבלת דוח עובדים, חשבוניות קבלות ותדפיס בנק באופן חודשי מגעש תעשיות מתכת";
+
+function publicRequirement(item: { label: string; kind: string }) {
+  return { label: item.label, type: item.kind === "ambiguous" ? null : item.kind };
+}
+
+test("gaash industries first turn keeps every requirement, peels mem, and asks for a contact", () => {
+  const started = startSetup(0, emptyWorkflowDraft());
+  const first = applySetupUserTurn({ current: started, userMessage: INDUSTRIES_MESSAGE });
+  assert.deepEqual(first.setup.requirements.map(publicRequirement), [
+    { label: "דוח עובדים", type: null },
+    { label: "חשבוניות", type: "file" },
+    { label: "קבלות", type: "file" },
+    { label: "תדפיס בנק", type: "file" },
+  ]);
+  assert.deepEqual(first.setup.recipientIdentity, {
+    organizationName: "געש תעשיות מתכת",
+    contactName: null,
+    contactResolution: "pending",
+    email: null,
+  });
+  assert.deepEqual(first.setup.proposal.schedule, {
+    type: "monthly",
+    day: null,
+    time: null,
+    timezone: TIMEZONE,
+  });
+  assert.equal(first.setup.proposal.recipients[0]?.name, "");
+  assert.equal(first.setup.recipientIdentity.contactName, null);
+  assert.notEqual(first.setup.recipientIdentity.contactName, "געש תעשיות");
+  assert.equal(first.setup.nextQuestion?.key, "contact_name");
+  assert.equal(first.setup.proposal.fields.length, 4);
+  assert.equal(first.setup.proposal.fields.every((field) => field.type === "unconfigured"), true);
+  assert.match(first.assistantMessage, /מעולה — בכל חודש נאסוף מגעש תעשיות מתכת דוח עובדים, חשבוניות, קבלות ותדפיס בנק/);
+  assert.match(first.assistantMessage, /מה שם איש הקשר בחברה/);
+  assert.equal(first.assistantMessage.includes("איך תרצה לקבל"), false);
+  assert.equal(leftPaneIsEmpty(first.setup, emptyWorkflowDraft()), true);
+
+  const refreshed = parseWorkflowSetupState(JSON.parse(JSON.stringify(first.setup)));
+  assert.equal(refreshed.success, true);
+  if (refreshed.success) {
+    assert.equal(refreshed.data.recipientIdentity.contactResolution, "pending");
+    assert.equal(refreshed.data.nextQuestion?.key, "contact_name");
+  }
+
+  const contact = applySetupUserTurn({ current: first.setup, userMessage: "רמי אביהו" });
+  assert.equal(contact.setup.recipientIdentity.contactName, "רמי אביהו");
+  assert.equal(contact.setup.recipientIdentity.contactResolution, "named");
+  assert.equal(contact.setup.nextQuestion?.key, "recipient_email");
+  assert.equal(setupAssistantMustNotAddressUserAs(contact.assistantMessage, "רמי אביהו"), true);
+  assert.equal(contact.assistantMessage.includes("רמי אביהו"), false);
+  assert.equal(contact.assistantMessage.includes("תודה, רמי"), false);
+  assert.equal(contact.assistantMessage, "מעולה. לאיזו כתובת מייל נשלח את הבקשה?");
+
+  const comma = applySetupUserTurn({ current: contact.setup, userMessage: "rami@gmail,com" });
+  assert.equal(comma.setup.proposal.recipients[0]?.email, "");
+  assert.equal(comma.setup.recipientIdentity.email, null);
+  assert.equal(comma.setup.nextQuestion?.key, "email_typo");
+  assert.equal(comma.assistantMessage, "נראה שיש פסיק במקום נקודה בכתובת. התכוונת ל־rami@gmail.com?");
+  assert.equal(comma.assistantMessage.includes("\\@"), false);
+  assert.equal(comma.assistantMessage.includes("לא הייתי בטוח למה התכוונת"), false);
+  assert.deepEqual(
+    comma.setup.nextQuestion?.options?.map((option) => option.label),
+    [he.studio.setup.emailTypoYes, he.studio.setup.emailTypoRewrite],
+  );
+
+  const rewrite = applySetupUserTurn({ current: comma.setup, userMessage: he.studio.setup.emailTypoRewrite });
+  assert.equal(rewrite.setup.proposal.recipients[0]?.email, "");
+  assert.equal(rewrite.setup.pendingEmailCorrection, null);
+  assert.equal(rewrite.setup.nextQuestion?.key, "recipient_email");
+
+  const commaAgain = applySetupUserTurn({ current: rewrite.setup, userMessage: "rami@gmail,com" });
+  const email = applySetupUserTurn({ current: commaAgain.setup, userMessage: he.studio.setup.emailTypoYes });
+  assert.equal(email.setup.proposal.recipients[0]?.email, "rami@gmail.com");
+  assert.equal(email.setup.proposal.recipients[0]?.email?.includes("\\"), false);
+  const day = applySetupUserTurn({ current: email.setup, userMessage: "סוף החודש" });
+  assert.equal(day.setup.proposal.schedule && "day" in day.setup.proposal.schedule ? day.setup.proposal.schedule.day : null, 31);
+  assert.equal(
+    day.setup.proposal.schedule && day.setup.proposal.schedule.type === "monthly"
+      ? day.setup.proposal.schedule.monthlyDayMode
+      : null,
+    "end_of_month",
+  );
+  const time = applySetupUserTurn({ current: day.setup, userMessage: "14" });
+  const reminder = applySetupUserTurn({ current: time.setup, userMessage: "אחרי שבוע" });
+  assert.equal(reminder.setup.status, "review");
+  const review = buildSetupReviewModel(reminder.setup);
+  assert.deepEqual(review.fields, ["דוח עובדים", "חשבוניות", "קבלות", "תדפיס בנק"]);
+  assert.equal(review.organizationName, "געש תעשיות מתכת");
+  assert.equal(review.contactName, "רמי אביהו");
+  assert.equal(review.email, "rami@gmail.com");
+  assert.equal(review.schedule, "חודשי · בסוף כל חודש · 14:00");
+  assert.equal(review.reminder, he.studio.reminderAfterWeek);
+  assert.equal(review.includesEmailContent, false);
+  assert.equal(JSON.stringify(review).includes("שלום רמי"), false);
+  assert.equal(leftPaneIsEmpty(reminder.setup, emptyWorkflowDraft()), true);
+  assert.equal(reminder.setup.proposal.fields.every((field) => field.type === "unconfigured"), true);
+});
+
+test("no fixed contact keeps identity empty and greets without a person", () => {
+  const started = startSetup(0, emptyWorkflowDraft());
+  const first = applySetupUserTurn({ current: started, userMessage: INDUSTRIES_MESSAGE });
+  const none = applySetupUserTurn({ current: first.setup, userMessage: he.studio.setup.noFixedContact });
+  assert.equal(none.setup.recipientIdentity.contactName, null);
+  assert.equal(none.setup.recipientIdentity.contactResolution, "no_fixed_contact");
+  assert.equal(none.setup.proposal.recipients[0]?.name, "");
+  const email = applySetupUserTurn({ current: none.setup, userMessage: "gaas@gmail.com" });
+  const day = applySetupUserTurn({ current: email.setup, userMessage: "22" });
+  const time = applySetupUserTurn({ current: day.setup, userMessage: "11" });
+  const reminder = applySetupUserTurn({ current: time.setup, userMessage: "אחרי יום" });
+  const review = buildSetupReviewModel(reminder.setup);
+  assert.equal(review.contactName, he.studio.setup.noFixedContact);
+  assert.match(reminder.setup.proposal.email.body, /^שלום,/);
+  assert.equal(reminder.setup.proposal.email.body.includes("שלום געש"), false);
+});
+
+test("an explicit contact in the first message skips the contact question", () => {
+  const result = applySetupUserTurn({
+    current: startSetup(0, emptyWorkflowDraft()),
+    userMessage: "קבלת חשבוניות באופן חודשי מגעש תעשיות, איש הקשר דוד כהן",
+  });
+  assert.equal(result.setup.recipientIdentity.organizationName, "געש תעשיות");
+  assert.equal(result.setup.recipientIdentity.contactName, "דוד כהן");
+  assert.equal(result.setup.recipientIdentity.contactResolution, "named");
+  assert.equal(result.setup.nextQuestion?.key, "recipient_email");
+});
+
+test("company names that start with mem are not peeled after מחברת", () => {
+  const matrix = applySetupUserTurn({
+    current: startSetup(0, emptyWorkflowDraft()),
+    userMessage: "קבלת חשבוניות באופן חודשי מחברת מטריקס",
+  });
+  assert.equal(matrix.setup.recipientIdentity.organizationName, "מטריקס");
+  assert.equal(matrix.setup.recipientIdentity.contactResolution, "pending");
+  const migdal = applySetupUserTurn({
+    current: startSetup(0, emptyWorkflowDraft()),
+    userMessage: "קבלת חשבוניות באופן חודשי ממגדל חברה לביטוח",
+  });
+  assert.equal(migdal.setup.recipientIdentity.organizationName, "מגדל חברה לביטוח");
+  const menorah = applySetupUserTurn({
+    current: startSetup(0, emptyWorkflowDraft()),
+    userMessage: "קבלת חשבוניות באופן חודשי מחברת מנורה מבטחים",
+  });
+  assert.equal(menorah.setup.recipientIdentity.organizationName, "מנורה מבטחים");
 });

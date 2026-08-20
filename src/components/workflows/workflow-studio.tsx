@@ -24,8 +24,7 @@ import { publishActionForStatus } from "@/lib/workflow/lifecycle";
 import { hasUnpublishedDraftChanges } from "@/lib/workflow/normalize";
 import { computeReadyToPublish, getDraftBlockers } from "@/lib/workflow/readiness";
 import { stashStudioState, takeStashedStudioState } from "@/lib/workflow/studio-session";
-import type { WorkflowSetupState } from "@/lib/workflow/setup-state";
-import { isBlankDraft } from "@/lib/workflow/setup-state";
+import { conversationModeOf, isBlankDraft, type WorkflowSetupState } from "@/lib/workflow/setup-state";
 import type { StudioInitialState, StudioMessage } from "@/lib/workflow/studio-state";
 
 const MAX_MESSAGE_LENGTH = 4000;
@@ -78,26 +77,6 @@ export function WorkflowStudio({ initial }: { initial: StudioInitialState }) {
   useEffect(() => {
     setupRevisionRef.current = state.setupRevision;
   }, [state.setupRevision]);
-
-  function applyDraft(draft: WorkflowDraftDefinition) {
-    setState((current) => {
-      const completion = getCompletionState(draft, {
-        hasMailbox: current.hasMailbox,
-        mailboxStatus: current.mailboxStatus,
-      });
-      return {
-        ...current,
-        draft,
-        blockers: getDraftBlockers(draft, { hasMailbox: current.hasMailbox, mailboxStatus: current.mailboxStatus }),
-        readyToPublish: computeReadyToPublish(draft, { hasMailbox: current.hasMailbox, mailboxStatus: current.mailboxStatus }),
-        hasUnpublishedChanges: hasUnpublishedDraftChanges(draft, current.published),
-        conversationIssues: completion.conversationIssues,
-        externalIssues: completion.externalIssues,
-        nextQuestions: completion.nextQuestions,
-        draftComplete: completion.draftComplete,
-      };
-    });
-  }
 
   function focusComposer(prompt?: string) {
     if (prompt) {
@@ -288,13 +267,12 @@ export function WorkflowStudio({ initial }: { initial: StudioInitialState }) {
 
   async function persistDraftEdit(next: WorkflowDraftDefinition, locks: EditorLockKey[]) {
     if (readOnly) {
-      return;
+      return false;
     }
     const withLocks = {
       ...next,
       editorLocks: mergeEditorLocks(next.editorLocks, locks),
     };
-    applyDraft(withLocks);
     setActionPending(true);
     setEmailSaved(false);
     const previousId = state.workflowId;
@@ -312,10 +290,10 @@ export function WorkflowStudio({ initial }: { initial: StudioInitialState }) {
           if (fresh) {
             setState(fresh);
           }
-          return;
+          return false;
         }
         toast.error(result.message);
-        return;
+        return false;
       }
       setState((current) => {
         const completion = getCompletionState(result.draft, {
@@ -325,6 +303,7 @@ export function WorkflowStudio({ initial }: { initial: StudioInitialState }) {
         const setupStale =
           current.setupState != null &&
           current.setupState.status !== "completed" &&
+          conversationModeOf(current.setupState) !== "edit" &&
           current.setupState.baseDraftRevision !== result.revision;
         return {
           ...current,
@@ -352,6 +331,7 @@ export function WorkflowStudio({ initial }: { initial: StudioInitialState }) {
       if (locks.includes("emailSubject") || locks.includes("emailBody")) {
         setEmailSaved(true);
       }
+      toast.success(he.studio.changeSaved);
       if (result.workflowId && result.workflowId !== previousId) {
         stashStudioState({
           ...state,
@@ -361,6 +341,10 @@ export function WorkflowStudio({ initial }: { initial: StudioInitialState }) {
         });
         router.replace(`/workflows/${result.workflowId}`);
       }
+      return true;
+    } catch {
+      toast.error(he.errors.saveFailed);
+      return false;
     } finally {
       setActionPending(false);
     }
@@ -390,7 +374,30 @@ export function WorkflowStudio({ initial }: { initial: StudioInitialState }) {
       }
       const fresh = await loadStudioState(state.workflowId);
       if (fresh) {
-        setState(fresh);
+        const hasBuilt = fresh.messages.some((item) => item.content === he.studio.setup.processBuilt);
+        setState({
+          ...fresh,
+          setupState: fresh.setupState
+            ? {
+                ...fresh.setupState,
+                status: "completed",
+                conversationMode: "edit",
+                pendingEdit: null,
+                nextQuestion: null,
+              }
+            : fresh.setupState,
+          messages: hasBuilt
+            ? fresh.messages
+            : [
+                ...fresh.messages,
+                {
+                  id: `assistant-built-${Date.now()}`,
+                  role: "assistant",
+                  content: he.studio.setup.processBuilt,
+                  clientTurnId: null,
+                },
+              ],
+        });
         revisionRef.current = fresh.revision;
         setupRevisionRef.current = fresh.setupRevision;
       }
@@ -453,7 +460,7 @@ export function WorkflowStudio({ initial }: { initial: StudioInitialState }) {
         emailSaved={emailSaved}
         readOnly={readOnly}
         setupState={state.setupState}
-        onDraftEdit={(draft, locks) => void persistDraftEdit(draft, locks)}
+        onDraftEdit={(draft, locks) => persistDraftEdit(draft, locks)}
         onSaveDraft={() =>
           void runAction(() => saveWorkflowDraft({ workflowId: state.workflowId, jsonText: JSON.stringify(state.draft) }))
         }

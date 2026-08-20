@@ -12,6 +12,36 @@ export const WEEKDAY_LABELS = [
   he.workflow.saturday,
 ] as const;
 
+export function formatReminderDelayHe(afterHours: number): string {
+  if (afterHours % 168 === 0) {
+    const weeks = afterHours / 168;
+    if (weeks === 1) {
+      return "אחרי שבוע";
+    }
+    if (weeks === 2) {
+      return "אחרי שבועיים";
+    }
+    return `אחרי ${weeks} שבועות`;
+  }
+  if (afterHours % 24 === 0) {
+    const days = afterHours / 24;
+    if (days === 1) {
+      return "אחרי יום";
+    }
+    if (days === 2) {
+      return "אחרי יומיים";
+    }
+    return `אחרי ${days} ימים`;
+  }
+  if (afterHours === 1) {
+    return "אחרי שעה";
+  }
+  if (afterHours === 2) {
+    return "אחרי שעתיים";
+  }
+  return `אחרי ${afterHours} שעות`;
+}
+
 export function weekdayLabel(weekday: number) {
   return WEEKDAY_LABELS[weekday] ?? String(weekday);
 }

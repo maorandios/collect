@@ -1,6 +1,7 @@
 "use client";
 
 import { he } from "@/lib/i18n/he";
+import { resolvedAllowedMimeTypes } from "@/lib/workflow/file-formats";
 import { fileLimitsLabel } from "@/lib/workflow/studio-display";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +26,8 @@ export function FileUpload({
   mode: "live" | "preview";
   onSelect?: (file: File) => void;
 }) {
+  const mime = resolvedAllowedMimeTypes(allowedMimeTypes);
+  const acceptTypes = accept.trim() ? accept : mime.join(",");
   const inactive = disabled || pending || files.length >= maxFiles || mode === "preview";
 
   return (
@@ -40,7 +43,7 @@ export function FileUpload({
         {mode === "live" ? (
           <input
             type="file"
-            accept={accept}
+            accept={acceptTypes}
             disabled={inactive}
             className="sr-only"
             onChange={(event) => {
@@ -54,7 +57,7 @@ export function FileUpload({
         ) : null}
       </label>
       <p className="text-xs text-muted-foreground">
-        {fileLimitsLabel({ allowedMimeTypes, maxFiles, maxFileSizeMb })}
+        {fileLimitsLabel({ allowedMimeTypes: mime, maxFiles, maxFileSizeMb })}
       </p>
       {pending ? <p className="text-xs text-muted-foreground">{he.recipient.uploading}</p> : null}
       {files.map((name, index) => (

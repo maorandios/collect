@@ -9,12 +9,13 @@ import {
   type MailboxCompletionStatus,
 } from "@/lib/workflow/completion";
 import { applySetupUserTurn, needsSetupAi, startSetup } from "@/lib/workflow/setup-agent";
+import { mergePointEdit } from "@/lib/workflow/point-edit";
 import { unsureMessage } from "@/lib/workflow/setup-copy";
 import type { SetupAiUsage, SetupAnswerInterpretation, SetupChangePatch, SetupExtraction } from "@/lib/workflow/setup-extraction";
 import { zeroSetupAiUsage } from "@/lib/workflow/setup-extraction";
 import { canonicalAnswerForQuestion, SETUP_INTERPRET_MIN_CONFIDENCE } from "@/lib/workflow/setup-parse";
 import { isDeterministicQuestion } from "@/lib/workflow/setup-reducer";
-import { parseWorkflowSetupState, type SetupQuestion, type WorkflowSetupState } from "@/lib/workflow/setup-state";
+import { conversationModeOf, parseWorkflowSetupState, type SetupQuestion, type WorkflowSetupState } from "@/lib/workflow/setup-state";
 import { getDraftBlockers } from "@/lib/workflow/readiness";
 
 const MAX_MESSAGE_LENGTH = 4000;
@@ -201,14 +202,23 @@ export async function runWorkflowChatTurn({
   }
 
   let setup = setupFromRecord(record);
-  if (!setup || setup.status === "completed") {
+  if (!setup) {
     const fromClient = parseWorkflowSetupState(request.setupState);
     setup =
       fromClient.success && fromClient.data.status !== "completed" && fromClient.data.baseDraftRevision === record.draft_revision
         ? fromClient.data
         : startSetup(record.draft_revision, savedDraft);
+  } else if (setup.status === "completed" || conversationModeOf(setup) === "edit") {
+    setup = {
+      ...setup,
+      status: "completed",
+      conversationMode: "edit",
+      proposal: savedDraft,
+      baseDraftRevision: record.draft_revision,
+      nextQuestion: setup.pendingEdit ? setup.nextQuestion : null,
+    };
   }
-  if (setup.baseDraftRevision !== record.draft_revision) {
+  if (conversationModeOf(setup) !== "edit" && setup.baseDraftRevision !== record.draft_revision) {
     return {
       status: 409,
       body: payload(
@@ -275,7 +285,7 @@ export async function runWorkflowChatTurn({
       const isChange =
         setup.status === "review" || question?.key === "change" || question?.key === "review";
       try {
-        if (isChange) {
+        if (isChange || conversationModeOf(setup) === "review" || conversationModeOf(setup) === "edit") {
           const recent = (await store.listRecent(record.id, 6))
             .filter((item) => item.role === "user" || item.role === "assistant")
             .map((item) => ({ role: item.role as "user" | "assistant", content: item.content }))
@@ -338,22 +348,88 @@ export async function runWorkflowChatTurn({
     }
   }
 
+  if (!applied) {
+    return {
+      status: 500,
+      body: { message: he.errors.saveFailed, workflowId: record.id },
+    };
+  }
+
+  const persistEditDraft = conversationModeOf(applied.setup) === "edit";
+
   try {
+    let draftForClient = persistEditDraft ? applied.setup.proposal : savedDraft;
+    let expectedDraftRevision = request.expectedRevision;
+    let setupToSave = applied.setup;
+
+    if (persistEditDraft) {
+      try {
+        const edited = await store.applyEdit({
+          workflowId: record.id,
+          userId,
+          expectedRevision: expectedDraftRevision,
+          draft: applied.setup.proposal,
+        });
+        expectedDraftRevision = edited.newRevision;
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== "revision_conflict") {
+          throw error;
+        }
+        const latest = await store.getOwned(record.id, userId);
+        const latestDraft = latest ? draftFromRecord(latest) : savedDraft;
+        const patch = applied.appliedPatch ?? null;
+        const merged = patch ? mergePointEdit(savedDraft, latestDraft, patch) : { ok: false as const };
+        if (!merged.ok || !latest) {
+          await store.insertMessage({
+            workflowId: record.id,
+            userId,
+            clientTurnId: request.clientTurnId,
+            role: "assistant",
+            content: he.studio.setup.editConflict,
+          });
+          return {
+            status: 200,
+            body: payload(
+              latest ?? record,
+              latestDraft,
+              latest ? setupFromRecord(latest) : setup,
+              { assistantMessage: he.studio.setup.editConflict, warnings: [] },
+              completionOptions,
+            ),
+          };
+        }
+        const edited = await store.applyEdit({
+          workflowId: record.id,
+          userId,
+          expectedRevision: latest.draft_revision,
+          draft: merged.draft,
+        });
+        expectedDraftRevision = edited.newRevision;
+        draftForClient = merged.draft;
+        setupToSave = { ...applied.setup, proposal: merged.draft };
+      }
+      setupToSave = {
+        ...setupToSave,
+        conversationMode: "edit",
+        baseDraftRevision: expectedDraftRevision,
+      };
+    }
+
     const saved = await store.applySetupTurn({
       workflowId: record.id,
       userId,
-      expectedDraftRevision: request.expectedRevision,
+      expectedDraftRevision,
       expectedSetupRevision: request.expectedSetupRevision,
-      setup: applied.setup,
+      setup: setupToSave,
       clientTurnId: request.clientTurnId,
       assistantContent: applied.assistantMessage,
     });
     return {
       status: 200,
       body: payload(
-        { ...record, draft_revision: saved.draftRevision, setup_revision: saved.setupRevision },
-        savedDraft,
-        applied.setup,
+        { ...record, draft_revision: persistEditDraft ? expectedDraftRevision : saved.draftRevision, setup_revision: saved.setupRevision },
+        draftForClient,
+        setupToSave,
         {
           assistantMessage: applied.assistantMessage,
           warnings: [],

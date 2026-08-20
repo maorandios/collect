@@ -1,5 +1,6 @@
 import { he } from "@/lib/i18n/he";
 import { isOnceInThePast } from "@/lib/schedule/next-run";
+import { unconfiguredFieldsMessage } from "@/lib/workflow/draft-fields";
 import type { DraftSchedule, WorkflowDraftDefinition } from "@/lib/workflow/draft-schema";
 import { TIMEZONE, type WorkflowDefinition, type WorkflowSchedule } from "@/lib/workflow/schema";
 
@@ -87,6 +88,11 @@ export function getPublishIssues(
 
   if (definition.fields.length === 0) {
     issues.push(he.workflows.missingFields);
+  }
+
+  const unconfiguredMessage = unconfiguredFieldsMessage(definition.fields);
+  if (unconfiguredMessage) {
+    issues.push(unconfiguredMessage);
   }
 
   for (const field of definition.fields) {

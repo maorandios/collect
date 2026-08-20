@@ -10,3 +10,7 @@ export function escapeHtml(value: string) {
 export function escapeAttribute(value: string) {
   return escapeHtml(value).replaceAll("\n", " ");
 }
+
+export function unescapeEmailAddress(value: string) {
+  return value.replaceAll("\\@", "@");
+}

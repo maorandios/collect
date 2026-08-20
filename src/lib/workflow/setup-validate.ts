@@ -1,3 +1,4 @@
+import { emailCoversAllFields } from "@/lib/workflow/setup-email";
 import { looksLikeEmail } from "@/lib/workflow/setup-parse";
 import type { WorkflowDraftDefinition } from "@/lib/workflow/draft-schema";
 
@@ -88,6 +89,13 @@ export function validateProposalSemantics(proposal: WorkflowDraftDefinition): Pr
     if (looksLikeEmail(field.label) || (field.helpText && looksLikeEmail(field.helpText))) {
       return { ok: false, reason: "email_in_fields" };
     }
+  }
+  const organization = proposal.recipients[0]?.organizationName?.trim() ?? "";
+  if (organization && /^(חשבונית|חשבוניות|קבלה|קבלות|אישור)/.test(organization)) {
+    return { ok: false, reason: "organization_from_document" };
+  }
+  if (proposal.fields.length > 0 && proposal.email.body.trim() && !emailCoversAllFields(proposal)) {
+    return { ok: false, reason: "email_omits_field" };
   }
   return { ok: true };
 }

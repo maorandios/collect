@@ -21,7 +21,7 @@ export type StoredChatMessage = {
 };
 
 export type ChatTurnStore = {
-  createDraft(userId: string): Promise<ChatWorkflowRecord>;
+  createDraft(userId: string, options?: { intakeRequestId?: string }): Promise<ChatWorkflowRecord>;
   getOwned(workflowId: string, userId: string): Promise<ChatWorkflowRecord | null>;
   findMessage(
     workflowId: string,

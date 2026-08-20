@@ -35,5 +35,5 @@ export function getDevSchedulesEnabled() {
 }
 
 export function getWorkflowWizardEnabled() {
-  return process.env.ENABLE_WORKFLOW_WIZARD === "true";
+  return process.env.ENABLE_WORKFLOW_WIZARD !== "false";
 }

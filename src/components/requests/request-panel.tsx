@@ -2,7 +2,7 @@
 
 import { Dialog } from "@base-ui/react/dialog";
 import Link from "next/link";
-import { X } from "lucide-react";
+import { Telescope } from "lucide-react";
 import { useState } from "react";
 
 import { RequestDetails } from "@/components/requests/request-details";
@@ -43,7 +43,7 @@ export function RequestPanel({
         />
         <Dialog.Popup
           className={cn(
-            "fixed inset-y-0 right-0 z-50 flex h-dvh w-[min(42.5rem,100vw)] max-w-[680px] flex-col border-l border-border bg-surface outline-none",
+            "fixed inset-y-0 right-0 z-50 flex h-dvh w-[min(31.875rem,100vw)] max-w-[510px] flex-col border-l border-border bg-surface outline-none",
             "shadow-[-24px_0_48px_rgba(17,24,39,0.14)]",
             "transition-transform duration-[400ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
             "data-[starting-style]:translate-x-full data-[ending-style]:translate-x-full",
@@ -57,20 +57,17 @@ export function RequestPanel({
                 item={displayed}
                 titleAs="h2"
                 trailing={
-                  <>
-                    <Link
-                      href={`/requests/${displayed.id}`}
-                      className={cn(buttonVariants({ variant: "outline" }), "h-10 rounded-[12px] px-3")}
-                    >
-                      {he.actions.openFullPage}
-                    </Link>
-                    <Dialog.Close
-                      className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "size-10 rounded-[12px]")}
-                      aria-label={he.actions.close}
-                    >
-                      <X className="size-4" />
-                    </Dialog.Close>
-                  </>
+                  <Link
+                    href={`/requests/${displayed.id}`}
+                    className={cn(
+                      buttonVariants({ variant: "ghost", size: "icon" }),
+                      "size-9 cursor-pointer rounded-[10px] text-muted-foreground hover:text-foreground",
+                    )}
+                    aria-label={he.requests.columns.view}
+                    title={he.requests.columns.view}
+                  >
+                    <Telescope className="size-[1.15rem]" />
+                  </Link>
                 }
               />
             </div>

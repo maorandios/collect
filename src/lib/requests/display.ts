@@ -254,6 +254,56 @@ function isFilledAnswer(field: WorkflowField, value: unknown) {
   return true;
 }
 
+export function isRequestFieldReceived(
+  field: WorkflowField,
+  answers: Record<string, unknown>,
+  files: { fieldId: string }[],
+) {
+  if (field.type === "file") {
+    return files.some((file) => file.fieldId === field.id);
+  }
+  return isFilledAnswer(field, answers[field.id]);
+}
+
+export type TimelineStepKey = "emailSent" | "linkOpened" | "fillingStarted" | "responseReceived";
+
+export function requestTimelineSteps(item: RequestListItem) {
+  const eventTime = (type: string) =>
+    item.events.find((event) => event.type === type)?.createdAt ?? null;
+  const fillingStarted = item.fields.some((field) =>
+    isRequestFieldReceived(field, item.answers, item.files),
+  );
+  const emailAt = item.sentAt ?? eventTime("email_sent");
+  const openedAt = item.openedAt ?? eventTime("form_opened");
+  const responseAt = item.submittedAt ?? item.completedAt ?? eventTime("submitted");
+  return [
+    {
+      key: "emailSent" as const,
+      label: he.requests.timelineEmailSent,
+      received: Boolean(emailAt),
+      at: emailAt,
+    },
+    {
+      key: "linkOpened" as const,
+      label: he.requests.timelineLinkOpened,
+      received: Boolean(openedAt),
+      at: openedAt,
+    },
+    {
+      key: "fillingStarted" as const,
+      label: he.requests.timelineFillingStarted,
+      received: fillingStarted,
+      at: fillingStarted ? openedAt : null,
+    },
+    {
+      key: "responseReceived" as const,
+      label: he.requests.timelineResponseReceived,
+      received: Boolean(responseAt) || item.status === "completed",
+      at: responseAt,
+    },
+  ];
+}
+
 export function computeProgress(
   fields: WorkflowField[],
   answers: Record<string, unknown>,

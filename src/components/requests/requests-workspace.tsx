@@ -4,15 +4,27 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Activity,
   Astroid,
+  AtSign,
+  Blend,
+  CalendarFold,
   CheckCircle2,
   CirclePlus,
   ClockAlert,
   ClockFading,
+  FileText,
+  GitCompare,
+  LoaderCircle,
   Mails,
+  Paperclip,
   PenLine,
   Search,
+  Send,
   Star,
+  Telescope,
+  Timer,
+  UserRoundArrowLeft,
   type LucideIcon,
 } from "lucide-react";
 
@@ -244,20 +256,25 @@ export function RequestsWorkspace({
           />
         ) : (
           <div className="overflow-hidden rounded-[16px] border border-border bg-surface">
-            <Table className="min-w-[68rem]">
+            <Table className="min-w-[86rem]">
               <TableHeader>
-                <TableRow className="bg-table-header hover:bg-table-header">
-                  <TableHead className="w-10 ps-5 text-center">{he.requests.columns.index}</TableHead>
-                  <TableHead>{he.requests.columns.eventName}</TableHead>
-                  <TableHead>{he.requests.columns.contact}</TableHead>
-                  <TableHead>{he.requests.columns.recurrence}</TableHead>
-                  <TableHead>{he.requests.columns.status}</TableHead>
-                  <TableHead>{he.requests.columns.progress}</TableHead>
-                  <TableHead>{he.requests.columns.attachments}</TableHead>
-                  <TableHead>{he.requests.columns.lastActivity}</TableHead>
-                  <TableHead className="text-center">{he.requests.columns.eventLink}</TableHead>
-                  <TableHead className="text-center">{he.requests.columns.viewProcess}</TableHead>
-                  <TableHead className="pe-8 text-center">{he.requests.columns.actions}</TableHead>
+                <TableRow className="h-11 bg-table-header hover:bg-table-header">
+                  <TableHead
+                    className="h-11 w-10 ps-5 text-center align-middle text-[90%] leading-none"
+                    aria-label={he.requests.columns.index}
+                  />
+                  <ColumnHead icon={GitCompare} label={he.requests.columns.eventName} />
+                  <ColumnHead icon={CalendarFold} label={he.requests.columns.createdAt} />
+                  <ColumnHead icon={UserRoundArrowLeft} label={he.requests.columns.contact} />
+                  <ColumnHead icon={AtSign} label={he.requests.columns.email} />
+                  <ColumnHead icon={Blend} label={he.requests.columns.status} />
+                  <ColumnHead icon={LoaderCircle} label={he.requests.columns.progress} />
+                  <ColumnHead icon={Paperclip} label={he.requests.columns.attachments} />
+                  <ColumnHead icon={Activity} label={he.requests.columns.lastActivity} />
+                  <ColumnHead icon={Timer} label={he.requests.columns.endAt} />
+                  <ColumnHead icon={Send} label={he.requests.columns.nudgeEvent} className="text-center" />
+                  <ColumnHead icon={FileText} label={he.requests.columns.summary} className="text-center" />
+                  <ColumnHead icon={Telescope} label={he.requests.columns.view} className="pe-8 text-center" />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -275,39 +292,24 @@ export function RequestsWorkspace({
         )}
 
         {page.totalPages > 1 ? (
-          <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
-            <p>
-              {he.requests.showingRange
-                .replace("{from}", String(page.start))
-                .replace("{to}", String(page.end))
-                .replace("{total}", String(page.total))}
-            </p>
-            <div className="flex items-center gap-2">
-              {page.page > 1 ? (
-                <Link
-                  href={requestListHref(query, { page: page.page - 1 })}
-                  className={cn(buttonVariants({ variant: "outline" }), "h-10 rounded-[12px] px-3")}
-                >
-                  {he.actions.previous}
-                </Link>
-              ) : null}
-              {page.page < page.totalPages ? (
-                <Link
-                  href={requestListHref(query, { page: page.page + 1 })}
-                  className={cn(buttonVariants({ variant: "outline" }), "h-10 rounded-[12px] px-3")}
-                >
-                  {he.actions.next}
-                </Link>
-              ) : null}
-            </div>
+          <div className="flex items-center justify-end gap-2">
+            {page.page > 1 ? (
+              <Link
+                href={requestListHref(query, { page: page.page - 1 })}
+                className={cn(buttonVariants({ variant: "outline" }), "h-10 rounded-[12px] px-3")}
+              >
+                {he.actions.previous}
+              </Link>
+            ) : null}
+            {page.page < page.totalPages ? (
+              <Link
+                href={requestListHref(query, { page: page.page + 1 })}
+                className={cn(buttonVariants({ variant: "outline" }), "h-10 rounded-[12px] px-3")}
+              >
+                {he.actions.next}
+              </Link>
+            ) : null}
           </div>
-        ) : page.total > 0 ? (
-          <p className="text-sm text-muted-foreground">
-            {he.requests.showingRange
-              .replace("{from}", String(page.start))
-              .replace("{to}", String(page.end))
-              .replace("{total}", String(page.total))}
-          </p>
         ) : null}
       </section>
 
@@ -316,6 +318,25 @@ export function RequestsWorkspace({
         onClose={() => router.replace(requestListHref(query, { request: "" }))}
       />
     </div>
+  );
+}
+
+function ColumnHead({
+  icon: Icon,
+  label,
+  className,
+}: {
+  icon: LucideIcon;
+  label: string;
+  className?: string;
+}) {
+  return (
+    <TableHead className={cn("h-11 py-0 text-[90%] align-middle", className)}>
+      <span className="inline-flex h-11 items-center gap-1.5 leading-none">
+        <Icon className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={1.75} />
+        <span className="leading-none">{label}</span>
+      </span>
+    </TableHead>
   );
 }
 

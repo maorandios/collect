@@ -8,9 +8,11 @@ import {
   HAS_REQUEST_DUE_AT,
   isCompletedThisMonth,
   isOverdue,
+  isRequestFieldReceived,
   isSubmittedLate,
   lastActivityAt,
   lastActivityDisplay,
+  requestTimelineSteps,
   fileCountLabel,
   formatFileSize,
   missingRequiredFields,
@@ -158,6 +160,39 @@ test("progress counts required fields including files", () => {
 
   const optionalOnly = computeProgress([dateField], {}, []);
   assert.equal(optionalOnly.label, "—");
+});
+
+test("request field received status uses answers and files without showing source files", () => {
+  assert.equal(isRequestFieldReceived(summary, {}, []), false);
+  assert.equal(isRequestFieldReceived(summary, { summary: "טקסט" }, []), true);
+  assert.equal(isRequestFieldReceived(fileField, {}, []), false);
+  assert.equal(isRequestFieldReceived(fileField, {}, [{ fieldId: "doc" }]), true);
+});
+
+test("timeline steps use sent, opened, filled fields and submitted", () => {
+  const empty = requestTimelineSteps(item());
+  assert.deepEqual(
+    empty.map((step) => [step.key, step.received]),
+    [
+      ["emailSent", true],
+      ["linkOpened", false],
+      ["fillingStarted", false],
+      ["responseReceived", false],
+    ],
+  );
+
+  const progressed = requestTimelineSteps(
+    item({
+      openedAt: "2026-08-18T07:10:00.000Z",
+      answers: { summary: "טקסט" },
+      submittedAt: "2026-08-18T07:20:00.000Z",
+      status: "completed",
+    }),
+  );
+  assert.equal(empty[0]?.at, "2026-08-18T07:05:00.000Z");
+  assert.equal(empty[1]?.at, null);
+  assert.equal(progressed.every((step) => step.received), true);
+  assert.equal(progressed[3]?.at, "2026-08-18T07:20:00.000Z");
 });
 
 test("test requests are excluded from lists and counts", () => {

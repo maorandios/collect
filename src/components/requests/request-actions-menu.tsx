@@ -1,10 +1,11 @@
 "use client";
 
-import { Eye, Link2, MoreHorizontal, Workflow } from "lucide-react";
+import { FileText, MoreHorizontal, Send, Telescope } from "lucide-react";
 import { useRouter } from "next/navigation";
-import type { MouseEvent, ReactNode } from "react";
+import { useState, type MouseEvent, type ReactNode } from "react";
 
 import { copyRequestLink } from "@/app/(app)/requests/copy-link-button";
+import { NudgeEventModal } from "@/components/requests/nudge-event-modal";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -34,7 +35,7 @@ function RequestActionButton({
       type="button"
       variant="ghost"
       size="icon"
-      className="size-8 rounded-[10px] text-muted-foreground hover:text-foreground"
+      className="size-8 cursor-pointer rounded-[10px] text-muted-foreground hover:text-foreground"
       aria-label={label}
       title={label}
       onClick={onClick}
@@ -45,55 +46,35 @@ function RequestActionButton({
 }
 
 export function RequestRowActionCells({
-  requestId,
-  workflowId,
+  onSummary,
+  onView,
 }: {
-  requestId: string;
-  workflowId: string;
+  onSummary: () => void;
+  onView: () => void;
 }) {
-  const router = useRouter();
+  const [nudgeOpen, setNudgeOpen] = useState(false);
 
   return (
     <>
-      <TableCell
-        className="text-center"
-        onClick={stopRow}
-        onPointerDown={stopRow}
-        onKeyDown={(event) => event.stopPropagation()}
-      >
+      <TableCell className="text-center">
         <RequestActionButton
-          label={he.requests.columns.eventLink}
-          onClick={() => void copyRequestLink(requestId)}
+          label={he.requests.columns.nudgeEvent}
+          onClick={() => setNudgeOpen(true)}
         >
-          <Link2 className="size-4" />
+          <Send className="size-4" />
         </RequestActionButton>
       </TableCell>
-      <TableCell
-        className="text-center"
-        onClick={stopRow}
-        onPointerDown={stopRow}
-        onKeyDown={(event) => event.stopPropagation()}
-      >
-        <RequestActionButton
-          label={he.requests.columns.viewProcess}
-          onClick={() => router.push(`/workflows/${workflowId}`)}
-        >
-          <Workflow className="size-4" />
+      <TableCell className="text-center">
+        <RequestActionButton label={he.requests.columns.summary} onClick={onSummary}>
+          <FileText className="size-4" />
         </RequestActionButton>
       </TableCell>
-      <TableCell
-        className="pe-8 text-center"
-        onClick={stopRow}
-        onPointerDown={stopRow}
-        onKeyDown={(event) => event.stopPropagation()}
-      >
-        <RequestActionButton
-          label={he.requests.columns.actions}
-          onClick={() => router.push(`/requests/${requestId}`)}
-        >
-          <Eye className="size-4" />
+      <TableCell className="pe-8 text-center">
+        <RequestActionButton label={he.requests.columns.view} onClick={onView}>
+          <Telescope className="size-4" />
         </RequestActionButton>
       </TableCell>
+      <NudgeEventModal open={nudgeOpen} onClose={() => setNudgeOpen(false)} />
     </>
   );
 }
@@ -113,18 +94,18 @@ export function RequestActionsMenu({
     <div onClick={stopRow} onPointerDown={stopRow} onKeyDown={(event) => event.stopPropagation()}>
       <DropdownMenu>
         <DropdownMenuTrigger
-          className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "size-8 rounded-[10px]")}
+          className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "size-8 cursor-pointer rounded-[10px]")}
           aria-label={he.actions.moreActions}
         >
           <MoreHorizontal className="size-4" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-48">
           <DropdownMenuItem onClick={() => void copyRequestLink(requestId)}>
-            {he.actions.copyLink}
+            {he.requests.columns.nudgeEvent}
           </DropdownMenuItem>
           {includeFullPage ? (
             <DropdownMenuItem onClick={() => router.push(`/requests/${requestId}`)}>
-              {he.actions.openFullPage}
+              {he.requests.columns.summary}
             </DropdownMenuItem>
           ) : null}
           <DropdownMenuItem onClick={() => router.push(`/workflows/${workflowId}`)}>

@@ -31,7 +31,7 @@ export function FilterSelect({
       <DropdownMenuTrigger
         aria-label={label}
         className={cn(
-          "inline-flex h-11 min-w-40 items-center justify-between gap-3 rounded-[12px] border border-border bg-card px-3.5 text-sm text-foreground outline-none select-none hover:bg-hover focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 data-popup-open:border-ring",
+          "inline-flex h-11 min-w-40 cursor-pointer items-center justify-between gap-3 rounded-[12px] border border-border bg-card px-3.5 text-sm text-foreground outline-none select-none hover:bg-hover focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 data-popup-open:border-ring",
           className,
         )}
       >

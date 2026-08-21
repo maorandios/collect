@@ -1,6 +1,6 @@
 "use client";
 
-import type { ComponentType, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { toast } from "sonner";
 import {
   Activity,
@@ -18,6 +18,7 @@ import {
   PenLine,
   SquareDashedText,
   Timer,
+  type LucideIcon,
 } from "lucide-react";
 
 import { RequestActionsMenu } from "@/components/requests/request-actions-menu";
@@ -40,7 +41,7 @@ import {
 import type { WorkflowField } from "@/lib/workflow/schema";
 import { cn } from "@/lib/utils";
 
-const timelineIcons: Record<TimelineStepKey, ComponentType<{ className?: string; strokeWidth?: number }>> = {
+const timelineIcons: Record<TimelineStepKey, LucideIcon> = {
   emailSent: Mail,
   linkOpened: Link2,
   fillingStarted: PenLine,
@@ -224,7 +225,7 @@ export function RequestDetails({
   );
 }
 
-function requirementIcon(field: WorkflowField) {
+function requirementIcon(field: WorkflowField): LucideIcon {
   if (field.type === "file") {
     return Paperclip;
   }
@@ -246,7 +247,7 @@ function SectionTitle({
   tone = "default",
   boxed = true,
 }: {
-  icon: ComponentType<{ className?: string }>;
+  icon: LucideIcon;
   children: ReactNode;
   tone?: "default" | "dark";
   boxed?: boolean;
@@ -282,7 +283,7 @@ function SummaryTile({
   tone = "default",
   children,
 }: {
-  icon: ComponentType<{ className?: string }>;
+  icon: LucideIcon;
   label: string;
   value: string;
   hint?: string;

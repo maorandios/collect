@@ -155,10 +155,7 @@ function matchesRecurrence(item: RequestListItem, when: string) {
   if (when === "once") {
     return type === "once" || type === "send_now" || type === "manual";
   }
-  if (when === "daily" || when === "yearly") {
-    return type === when;
-  }
-  return true;
+  return type === when;
 }
 
 export function sortRequestItems(items: RequestListItem[], sort: RequestListQuery["sort"]) {

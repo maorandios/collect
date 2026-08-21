@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -32,12 +32,26 @@ function inferMimeType(file: File) {
 
 type Answers = Record<string, unknown>;
 
-async function touchOnce(touched: { current: boolean }) {
-  if (touched.current) {
+type TouchState = { opened: boolean; filling: boolean };
+
+async function touchOnce(touched: { current: TouchState }, filling = false) {
+  if (!filling && touched.current.opened) {
     return;
   }
-  touched.current = true;
-  await fetch("/api/public/touch", { method: "POST" });
+  if (filling && touched.current.filling) {
+    return;
+  }
+  if (filling) {
+    touched.current.filling = true;
+  } else {
+    touched.current.opened = true;
+  }
+  await fetch("/api/public/touch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filling }),
+    keepalive: true,
+  });
 }
 
 function FileField({
@@ -151,14 +165,21 @@ export function FormRenderer({
   const router = useRouter();
   const [answers, setAnswers] = useState<Answers>(initialAnswers);
   const [pending, setPending] = useState(false);
-  const touched = useRef(false);
+  const touched = useRef<TouchState>({ opened: false, filling: false });
   const preview = mode === "preview";
+
+  useEffect(() => {
+    if (preview) {
+      return;
+    }
+    void touchOnce(touched);
+  }, [preview]);
 
   function update(fieldId: string, value: unknown) {
     if (preview) {
       return;
     }
-    void touchOnce(touched);
+    void touchOnce(touched, true);
     setAnswers((current) => ({ ...current, [fieldId]: value }));
   }
 
@@ -168,7 +189,7 @@ export function FormRenderer({
     }
     setPending(true);
     try {
-      await touchOnce(touched);
+      await touchOnce(touched, true);
       const response = await fetch("/api/public/draft", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -191,7 +212,7 @@ export function FormRenderer({
     }
     setPending(true);
     try {
-      await touchOnce(touched);
+      await touchOnce(touched, true);
       const response = await fetch("/api/public/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -248,7 +269,7 @@ export function FormRenderer({
                 ) : (
                   <FileField
                     field={field}
-                    onInteract={() => void touchOnce(touched)}
+                    onInteract={() => void touchOnce(touched, true)}
                     initialFiles={initialFiles
                       .filter((file) => file.fieldId === field.id)
                       .map((file) => file.name)}

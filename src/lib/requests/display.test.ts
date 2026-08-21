@@ -17,6 +17,7 @@ import {
   formatFileSize,
   missingRequiredFields,
   nextActionDisplay,
+  organizationNameForRecipient,
   reminderSummary,
   parseFileSizeBytes,
   runLine,
@@ -80,6 +81,7 @@ function item(overrides: Partial<RequestListItem> = {}): RequestListItem {
     workflowId: "22222222-2222-4222-8222-222222222222",
     processName: "סיכום שבועי",
     recipientName: "רוני",
+    organizationName: null,
     recipientEmail: "roni@example.com",
     status: "sent",
     scheduledFor: "2026-08-18T07:00:00.000Z",
@@ -167,6 +169,42 @@ test("request field received status uses answers and files without showing sourc
   assert.equal(isRequestFieldReceived(summary, { summary: "טקסט" }, []), true);
   assert.equal(isRequestFieldReceived(fileField, {}, []), false);
   assert.equal(isRequestFieldReceived(fileField, {}, [{ fieldId: "doc" }]), true);
+});
+
+test("timeline records link opened without treating it as filling started", () => {
+  const openedOnly = requestTimelineSteps(
+    item({
+      openedAt: "2026-08-18T07:10:00.000Z",
+      events: [{ id: "open", type: "form_opened", createdAt: "2026-08-18T07:10:00.000Z" }],
+    }),
+  );
+  assert.equal(openedOnly[1]?.received, true);
+  assert.equal(openedOnly[1]?.at, "2026-08-18T07:10:00.000Z");
+  assert.equal(openedOnly[2]?.received, false);
+  assert.equal(openedOnly[2]?.at, null);
+
+  const fillingLater = requestTimelineSteps(
+    item({
+      openedAt: "2026-08-18T07:10:00.000Z",
+      answers: { summary: "טקסט" },
+      events: [
+        { id: "open", type: "form_opened", createdAt: "2026-08-18T07:10:00.000Z" },
+        { id: "fill", type: "filling_started", createdAt: "2026-08-18T07:25:00.000Z" },
+      ],
+    }),
+  );
+  assert.equal(fillingLater[1]?.at, "2026-08-18T07:10:00.000Z");
+  assert.equal(fillingLater[2]?.at, "2026-08-18T07:25:00.000Z");
+});
+
+test("organization name comes from the matching recipient and is hidden when it duplicates the contact", () => {
+  const recipients = [
+    { email: "roni@example.com", organizationName: "געש תעשיות מתכת" },
+    { email: "other@example.com", organizationName: "חברה אחרת" },
+  ];
+  assert.equal(organizationNameForRecipient(recipients, "roni@example.com", "רוני"), "געש תעשיות מתכת");
+  assert.equal(organizationNameForRecipient(recipients, "roni@example.com", "געש תעשיות מתכת"), null);
+  assert.equal(organizationNameForRecipient([], "roni@example.com", "רוני"), null);
 });
 
 test("timeline steps use sent, opened, filled fields and submitted", () => {

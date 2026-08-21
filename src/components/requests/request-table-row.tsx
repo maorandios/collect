@@ -35,7 +35,7 @@ export function RequestTableRow({
   return (
     <TableRow
       className={cn(
-        "h-[3.45rem] hover:bg-hover [&>td]:h-[3.45rem] [&>td]:align-middle",
+        "h-auto min-h-[3.45rem] hover:bg-hover [&>td]:py-2 [&>td]:align-middle",
         selected && "bg-primary/5",
       )}
       aria-selected={selected}
@@ -45,7 +45,14 @@ export function RequestTableRow({
       <TableCell className="whitespace-nowrap text-muted-foreground">
         {formatIsraelDateTime(item.createdAt ?? item.scheduledFor)}
       </TableCell>
-      <TableCell className="min-w-[8rem] whitespace-normal">{recipient.name ?? "—"}</TableCell>
+      <TableCell className="min-w-[8rem] whitespace-normal">
+        <div className="leading-tight">
+          <p>{recipient.name ?? "—"}</p>
+          {item.organizationName ? (
+            <p className="mt-0.5 text-xs text-muted-foreground">{item.organizationName}</p>
+          ) : null}
+        </div>
+      </TableCell>
       <TableCell className="min-w-[12rem]">
         <span dir="ltr">{recipient.email}</span>
       </TableCell>

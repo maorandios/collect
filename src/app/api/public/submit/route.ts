@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { he } from "@/lib/i18n/he";
+import { markFillingStarted } from "@/lib/requests/mark-opened";
 import { getRecipientRequest } from "@/lib/requests/recipient";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { WorkflowField } from "@/lib/workflow/schema";
@@ -84,6 +85,7 @@ export async function POST(request: Request) {
     type: "submitted",
     payload: {},
   });
+  await markFillingStarted(requestRow.id, admin);
 
   return NextResponse.json({ ok: true });
 }

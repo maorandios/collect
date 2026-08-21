@@ -83,6 +83,7 @@ export const he = {
     send_failed: "שליחת המייל נכשלה",
     reminder_sent: "נשלחה תזכורת",
     form_opened: "הטופס נפתח",
+    filling_started: "המילוי התחיל",
     submitted: "הטופס הוגש",
   },
   requests: {

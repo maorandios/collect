@@ -25,12 +25,10 @@ import { RequestActionsMenu } from "@/components/requests/request-actions-menu";
 import { formatIsraelDateTime } from "@/lib/dates";
 import { he } from "@/lib/i18n/he";
 import {
-  OPEN_STATUSES,
   computeProgress,
   fileCountLabel,
   isRequestFieldReceived,
   lastActivityAt,
-  missingRequiredFields,
   recipientLabel,
   requestErrorMessage,
   requestTimelineSteps,
@@ -61,9 +59,6 @@ export function RequestDetails({
   const recipient = recipientLabel(item.recipientName, item.recipientEmail);
   const progress = computeProgress(item.fields, item.answers, item.files);
   const errorMessage = requestErrorMessage(item.lastError);
-  const missing = OPEN_STATUSES.has(item.status)
-    ? missingRequiredFields(item.fields, item.answers, item.files)
-    : [];
   const showOverflowMenu = titleAs === "h1";
 
   async function copyEmail() {
@@ -149,16 +144,6 @@ export function RequestDetails({
             value={formatIsraelDateTime(item.completedAt)}
           />
         </div>
-        {missing.length ? (
-          <div className="mt-4 rounded-[12px] border border-amber-200 bg-amber-50 px-3 py-2">
-            <p className="text-sm font-medium text-amber-800">{he.requests.stillMissing}</p>
-            <ul className="mt-1 list-disc pe-5 text-sm text-amber-900">
-              {missing.map((field) => (
-                <li key={field.id}>{field.label}</li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
         {errorMessage ? (
           <p className="mt-3 text-sm text-destructive">
             {he.requests.lastError}: {errorMessage}
@@ -177,14 +162,12 @@ export function RequestDetails({
               const Icon = requirementIcon(field);
               return (
                 <li key={field.id} className="flex items-center gap-2 text-sm text-foreground">
-                  <Icon className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={1.75} />
-                  <span>
-                    {field.label}
-                    <span> · </span>
-                    <span className="text-[90%]">
-                      {received ? he.requests.received : he.requests.notReceived}
-                    </span>
-                  </span>
+                  <Icon
+                    className="size-3.5 shrink-0"
+                    strokeWidth={1.75}
+                    style={{ color: received ? "#38C095" : "#FF4400" }}
+                  />
+                  <span>{field.label}</span>
                 </li>
               );
             })}

@@ -1,4 +1,5 @@
 import { he } from "@/lib/i18n/he";
+import { markRequestOpened } from "@/lib/requests/mark-opened";
 import { getRecipientRequest } from "@/lib/requests/recipient";
 import { FormRenderer } from "@/components/forms/form-renderer";
 
@@ -28,6 +29,8 @@ export default async function RecipientFormPage() {
       </div>
     );
   }
+
+  await markRequestOpened(requestRow.id);
 
   return (
     <div className="min-h-dvh bg-background p-6 py-12">

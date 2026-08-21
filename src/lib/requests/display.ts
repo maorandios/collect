@@ -45,6 +45,7 @@ export type RequestListItem = {
   workflowId: string;
   processName: string;
   recipientName: string | null;
+  organizationName: string | null;
   recipientEmail: string;
   status: string;
   scheduledFor: string | null;
@@ -107,6 +108,23 @@ export function recipientLabel(name: string | null | undefined, email: string) {
     return { name: trimmed, email };
   }
   return { name: null, email };
+}
+
+export function organizationNameForRecipient(
+  recipients: Array<{ email: string; organizationName?: string | null }> | undefined,
+  recipientEmail: string,
+  recipientName?: string | null,
+) {
+  const email = recipientEmail.trim().toLowerCase();
+  const match = recipients?.find((recipient) => recipient.email.trim().toLowerCase() === email);
+  const organization = (match ?? recipients?.[0])?.organizationName?.trim() || "";
+  if (!organization) {
+    return null;
+  }
+  if (recipientName?.trim() && recipientName.trim() === organization) {
+    return null;
+  }
+  return organization;
 }
 
 export function lastActivityAt(input: {
@@ -270,11 +288,12 @@ export type TimelineStepKey = "emailSent" | "linkOpened" | "fillingStarted" | "r
 export function requestTimelineSteps(item: RequestListItem) {
   const eventTime = (type: string) =>
     item.events.find((event) => event.type === type)?.createdAt ?? null;
-  const fillingStarted = item.fields.some((field) =>
+  const hasFilledFields = item.fields.some((field) =>
     isRequestFieldReceived(field, item.answers, item.files),
   );
   const emailAt = item.sentAt ?? eventTime("email_sent");
   const openedAt = item.openedAt ?? eventTime("form_opened");
+  const fillingAt = eventTime("filling_started") ?? (hasFilledFields ? openedAt : null);
   const responseAt = item.submittedAt ?? item.completedAt ?? eventTime("submitted");
   return [
     {
@@ -292,8 +311,8 @@ export function requestTimelineSteps(item: RequestListItem) {
     {
       key: "fillingStarted" as const,
       label: he.requests.timelineFillingStarted,
-      received: fillingStarted,
-      at: fillingStarted ? openedAt : null,
+      received: Boolean(fillingAt),
+      at: fillingAt,
     },
     {
       key: "responseReceived" as const,
@@ -618,6 +637,11 @@ export function mapRequestRow(row: {
     workflowId: row.workflow_id,
     processName: processName(row.workflows, row.definition_snapshot),
     recipientName: row.recipient_name,
+    organizationName: organizationNameForRecipient(
+      definition?.recipients,
+      row.recipient_email,
+      row.recipient_name,
+    ),
     recipientEmail: row.recipient_email,
     status: row.status,
     scheduledFor: row.scheduled_for,

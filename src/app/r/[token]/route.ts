@@ -7,6 +7,7 @@ import {
   recipientCookieOptions,
 } from "@/lib/magic-link/session";
 import { verifyMagicLinkToken } from "@/lib/magic-link/token";
+import { markRequestOpened } from "@/lib/requests/mark-opened";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function GET(
@@ -38,6 +39,10 @@ export async function GET(
     const recordExpired = new Date(data.token_expires_at).getTime() <= Date.now();
     if (payloadExpired || recordExpired) {
       return NextResponse.redirect(new URL("/r/expired", origin));
+    }
+
+    if (data.status !== "completed") {
+      await markRequestOpened(data.id, admin);
     }
 
     const destination = data.status === "completed" ? "/r/success" : "/r";

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { he } from "@/lib/i18n/he";
+import { markFillingStarted } from "@/lib/requests/mark-opened";
 import { getRecipientRequest } from "@/lib/requests/recipient";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -52,5 +53,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: he.errors.saveFailed }, { status: 500 });
   }
 
+  await markFillingStarted(requestRow.id, admin);
   return NextResponse.json({ ok: true, message: he.recipient.uploaded });
 }

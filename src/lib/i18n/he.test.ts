@@ -31,5 +31,6 @@ test("status labels come only from he.statuses", () => {
 test("event labels are Hebrew", () => {
   assert.equal(eventLabel("email_sent"), he.events.email_sent);
   assert.equal(eventLabel("submitted"), he.events.submitted);
+  assert.equal(eventLabel("filling_started"), he.events.filling_started);
   assert.equal(eventLabel("unknown_event"), he.errors.generic);
 });

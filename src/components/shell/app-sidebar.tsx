@@ -2,66 +2,67 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Inbox, Settings, Workflow } from "lucide-react";
+import { GitCompare, LogOut, Settings, Star, Zap } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { he } from "@/lib/i18n/he";
 
 import { signOut } from "@/app/(app)/actions";
 
 const items = [
-  { href: "/requests", label: he.nav.requests, icon: Inbox },
-  { href: "/workflows", label: he.nav.workflows, icon: Workflow },
+  { href: "/requests", label: he.nav.requests, icon: Star },
+  { href: "/workflows", label: he.nav.workflows, icon: GitCompare },
   { href: "/settings", label: he.nav.settings, icon: Settings },
 ];
 
-export function AppSidebar({ email }: { email: string | null }) {
+const iconButtonClass =
+  "flex size-10 items-center justify-center rounded-lg text-muted-foreground transition-colors";
+
+export function AppSidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="flex h-full w-64 shrink-0 flex-col border-e border-border bg-surface">
-      <div className="px-6 py-6">
+    <aside className="flex h-full w-14 shrink-0 flex-col items-center border-e border-border bg-sidebar">
+      <div className="flex h-20 w-full shrink-0 items-center justify-center">
         <Link
           href="/requests"
-          className="text-xl font-semibold tracking-tight text-foreground"
+          aria-label={he.productName}
+          className="flex size-10 items-center justify-center rounded-lg bg-zinc-700 text-zinc-100"
         >
-          {he.productName}
+          <Zap className="size-[25px]" strokeWidth={1.75} />
         </Link>
       </div>
-      <nav className="flex flex-1 flex-col gap-1 px-3">
+      <nav className="flex w-full flex-col items-center gap-3 pt-8">
         {items.map((item) => {
-          const active =
-            pathname === item.href || pathname.startsWith(`${item.href}/`);
+          const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
           const Icon = item.icon;
 
           return (
             <Link
               key={item.href}
               href={item.href}
+              aria-label={item.label}
+              title={item.label}
               className={cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors",
-                active
-                  ? "bg-hover font-medium text-foreground"
-                  : "text-muted-foreground hover:bg-hover hover:text-foreground",
+                iconButtonClass,
+                active ? "bg-white text-foreground shadow-sm" : "hover:text-foreground",
               )}
             >
-              <Icon className="size-4" strokeWidth={1.75} />
-              {item.label}
+              <Icon className="size-5" strokeWidth={1.7} />
             </Link>
           );
         })}
-      </nav>
-      <div className="border-t border-border px-4 py-4">
-        {email ? (
-          <p className="mb-3 truncate text-xs text-muted-foreground">{email}</p>
-        ) : null}
         <form action={signOut}>
-          <Button type="submit" variant="ghost" className="h-9 w-full justify-start">
-            {he.actions.signOut}
-          </Button>
+          <button
+            type="submit"
+            aria-label={he.actions.signOut}
+            title={he.actions.signOut}
+            className={cn(iconButtonClass, "hover:text-foreground")}
+          >
+            <LogOut className="size-5" strokeWidth={1.7} />
+          </button>
         </form>
-      </div>
+      </nav>
     </aside>
   );
 }

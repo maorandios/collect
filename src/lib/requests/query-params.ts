@@ -5,8 +5,6 @@ import {
   lastActivityAt,
   isCompletedThisMonth,
   isOverdue,
-  isScheduledThisWeek,
-  isScheduledToday,
 } from "./display";
 
 const uuidPattern =
@@ -17,12 +15,13 @@ const STATUS_VALUES = new Set([
   "sent",
   "filling",
   "completed",
+  "completed_month",
   "failed",
   "expired",
   "open",
   "waiting",
 ]);
-const WHEN_VALUES = new Set(["overdue", "today", "week"]);
+const WHEN_VALUES = new Set(["daily", "weekly", "monthly", "yearly", "once"]);
 const PERIOD_VALUES = new Set(["month"]);
 
 export type RequestListQuery = {
@@ -53,7 +52,7 @@ export function parseRequestListQuery(
     q: read("q").trim(),
     status: STATUS_VALUES.has(status) ? status : "",
     workflow: uuidPattern.test(read("workflow")) ? read("workflow") : "",
-    when: WHEN_VALUES.has(when) && when !== "overdue" ? when : "",
+    when: WHEN_VALUES.has(when) ? when : "",
     period: PERIOD_VALUES.has(period) ? period : "",
     page: Number.isInteger(page) && page > 0 ? page : 1,
     sort: HAS_REQUEST_DUE_AT ? sort : "activity",
@@ -76,7 +75,7 @@ export function requestListSearchParams(
   if (next.workflow) {
     params.set("workflow", next.workflow);
   }
-  if (next.when && next.when !== "overdue") {
+  if (next.when && WHEN_VALUES.has(next.when)) {
     params.set("when", next.when);
   }
   if (next.period) {
@@ -113,35 +112,51 @@ export function matchesRequestFilters(item: RequestListItem, query: RequestListQ
   if (query.workflow && item.workflowId !== query.workflow) {
     return false;
   }
-  if (query.status === "open" && !OPEN_STATUSES.has(item.status)) {
+  if (query.status === "completed_month" || query.period === "month") {
+    if (item.status !== "completed" || !isCompletedThisMonth(item.completedAt, now)) {
+      return false;
+    }
+  } else if (query.status === "filling" && !FILLING_STATUSES.has(item.status)) {
     return false;
-  }
-  if (query.status === "filling" && !FILLING_STATUSES.has(item.status)) {
+  } else if (query.status === "waiting" && item.status !== "sent") {
     return false;
-  }
-  if (query.status === "waiting" && item.status !== "sent") {
+  } else if (query.status === "open" && !OPEN_STATUSES.has(item.status)) {
     return false;
-  }
-  if (
+  } else if (
     query.status &&
     query.status !== "open" &&
     query.status !== "filling" &&
     query.status !== "waiting" &&
+    query.status !== "completed_month" &&
     item.status !== query.status
   ) {
     return false;
   }
-  if (query.period === "month" && (item.status !== "completed" || !isCompletedThisMonth(item.completedAt, now))) {
-    return false;
-  }
-  if (query.when === "today" && !isScheduledToday(item.scheduledFor, now)) {
-    return false;
-  }
-  if (query.when === "week" && !isScheduledThisWeek(item.scheduledFor, now)) {
+  if (!matchesRecurrence(item, query.when)) {
     return false;
   }
   if (HAS_REQUEST_DUE_AT && query.when === "overdue" && !isOverdue({ dueAt: item.dueAt, status: item.status, now })) {
     return false;
+  }
+  return true;
+}
+
+function matchesRecurrence(item: RequestListItem, when: string) {
+  if (!when) {
+    return true;
+  }
+  const type = item.schedule?.type;
+  if (when === "weekly") {
+    return type === "weekly";
+  }
+  if (when === "monthly") {
+    return type === "monthly";
+  }
+  if (when === "once") {
+    return type === "once" || type === "send_now" || type === "manual";
+  }
+  if (when === "daily" || when === "yearly") {
+    return type === when;
   }
   return true;
 }
@@ -178,9 +193,11 @@ export function paginateItems<T>(items: T[], page: number, pageSize = PAGE_SIZE)
 export function summarizeRequests(items: RequestListItem[], now = new Date()) {
   const live = items.filter((item) => !item.isTest);
   return {
+    total: live.length,
     open: live.filter((item) => OPEN_STATUSES.has(item.status)).length,
     filling: live.filter((item) => FILLING_STATUSES.has(item.status)).length,
     waiting: live.filter((item) => item.status === "sent").length,
+    expired: live.filter((item) => item.status === "expired").length,
     overdue: HAS_REQUEST_DUE_AT
       ? live.filter((item) => isOverdue({ dueAt: item.dueAt, status: item.status, now })).length
       : null,

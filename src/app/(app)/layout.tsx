@@ -8,11 +8,11 @@ export default async function AppLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { user } = await requireUser();
+  await requireUser();
 
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-background">
-      <AppSidebar email={user.email ?? null} />
+      <AppSidebar />
       <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
     </div>
   );

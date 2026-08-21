@@ -4,12 +4,16 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Astroid,
   CheckCircle2,
-  Clock,
-  Inbox,
+  CirclePlus,
+  ClockAlert,
+  ClockFading,
+  Mails,
   PenLine,
-  Plus,
   Search,
+  Star,
+  type LucideIcon,
 } from "lucide-react";
 
 import { EmptyState } from "@/components/feedback/empty-state";
@@ -26,11 +30,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { he } from "@/lib/i18n/he";
-import {
-  REQUEST_STATUS_FILTERS,
-  requestUiStatusLabel,
-  type RequestListItem,
-} from "@/lib/requests/display";
+import type { RequestListItem } from "@/lib/requests/display";
 import {
   hasActiveFilters,
   paginateItems,
@@ -42,10 +42,21 @@ import {
 } from "@/lib/requests/query-params";
 import { cn } from "@/lib/utils";
 
-const DATE_FILTERS = [
+const STATUS_FILTERS = [
+  { value: "", label: he.requests.allStatuses },
+  { value: "filling", label: he.requests.summaryFilling },
+  { value: "waiting", label: he.requests.summaryWaiting },
+  { value: "expired", label: he.requests.summaryExpired },
+  { value: "completed_month", label: he.requests.filterCompletedMonth },
+] as const;
+
+const RECURRENCE_FILTERS = [
   { value: "", label: he.requests.allDates },
-  { value: "today", label: he.requests.dateToday },
-  { value: "week", label: he.requests.dateWeek },
+  { value: "daily", label: he.requests.recurrenceDaily },
+  { value: "weekly", label: he.requests.recurrenceWeekly },
+  { value: "monthly", label: he.requests.recurrenceMonthly },
+  { value: "yearly", label: he.requests.recurrenceYearly },
+  { value: "once", label: he.requests.recurrenceOnce },
 ] as const;
 
 export function RequestsWorkspace({
@@ -91,9 +102,12 @@ export function RequestsWorkspace({
   const createButton = (
     <Link
       href={createHref}
-      className={cn(buttonVariants({ size: "lg" }), "h-11 rounded-[12px] px-4")}
+      className={cn(
+        buttonVariants({ size: "lg" }),
+        "h-11 rounded-2xl bg-zinc-700 px-4 text-white hover:bg-zinc-800",
+      )}
     >
-      <Plus className="size-4" />
+      <CirclePlus className="size-4" />
       {he.actions.createWorkflow}
     </Link>
   );
@@ -103,103 +117,103 @@ export function RequestsWorkspace({
   }
 
   return (
-    <div className="relative h-full min-h-0 overflow-auto overflow-x-hidden">
-      <header className="flex items-center justify-between gap-4 border-b border-border bg-surface px-8 py-5">
+    <div className="relative flex h-full min-h-0 flex-col overflow-x-hidden">
+      <header className="flex h-20 shrink-0 items-center justify-between gap-4 border-b border-border bg-sidebar px-8">
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold text-foreground">{he.requests.title}</h1>
+          <h1 className="flex items-center gap-2 text-2xl font-semibold text-foreground">
+            <Star className="size-5 shrink-0" strokeWidth={1.7} />
+            {he.requests.title}
+          </h1>
           <p className="mt-1 text-sm text-muted-foreground">{he.requests.subtitle}</p>
         </div>
         {createButton}
       </header>
 
-      <section className="space-y-5 p-8">
-        <div className="grid grid-cols-2 gap-3 min-[1440px]:grid-cols-4">
+      <section className="min-h-0 flex-1 space-y-5 overflow-auto p-8">
+        <div className="flex overflow-hidden rounded-2xl border border-border bg-surface">
           <SummaryCard
-            title={he.requests.summaryOpen}
-            hint={he.requests.summaryOpenHint}
-            value={summary.open}
-            icon={Inbox}
-            active={query.status === "open"}
-            onClick={() => go({ status: query.status === "open" ? "" : "open", period: "", page: 1 })}
+            title={he.requests.summaryTotal}
+            hint={he.requests.summaryTotalHint}
+            value={summary.total}
+            icon={Mails}
           />
           <SummaryCard
             title={he.requests.summaryFilling}
             hint={he.requests.summaryFillingHint}
             value={summary.filling}
             icon={PenLine}
-            tone="amber"
-            active={query.status === "filling"}
-            onClick={() => go({ status: query.status === "filling" ? "" : "filling", period: "", page: 1 })}
           />
           <SummaryCard
             title={he.requests.summaryWaiting}
             hint={he.requests.summaryWaitingHint}
             value={summary.waiting}
-            icon={Clock}
-            active={query.status === "waiting"}
-            onClick={() => go({ status: query.status === "waiting" ? "" : "waiting", period: "", page: 1 })}
+            icon={ClockFading}
+          />
+          <SummaryCard
+            title={he.requests.summaryExpired}
+            hint={he.requests.summaryExpiredHint}
+            value={summary.expired}
+            icon={ClockAlert}
           />
           <SummaryCard
             title={he.requests.summaryDoneMonth}
             hint={he.requests.summaryDoneMonthHint}
             value={summary.completedMonth}
             icon={CheckCircle2}
-            tone="teal"
-            active={query.period === "month"}
-            onClick={() => go({ period: query.period === "month" ? "" : "month", status: "", page: 1 })}
+            variant="accent"
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <label className="relative min-w-[16rem] flex-1">
+        <div className="grid grid-cols-5 items-center">
+          <label className="relative pe-3">
             <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder={he.requests.searchPlaceholder}
-              className="h-11 rounded-[12px] border-border bg-card! ps-10"
+              className="h-11 w-full rounded-[12px] border-border bg-card! ps-10"
             />
           </label>
-          <FilterSelect
-            label={he.requests.filterStatus}
-            value={
-              (REQUEST_STATUS_FILTERS as readonly string[]).includes(query.status)
-                ? query.status
-                : ""
-            }
-            options={[
-              { value: "", label: he.requests.allStatuses },
-              ...REQUEST_STATUS_FILTERS.map((status) => ({
-                value: status,
-                label: requestUiStatusLabel(status),
-              })),
-            ]}
-            onChange={(status) => go({ status, period: "", page: 1 })}
-          />
-          <FilterSelect
-            label={he.requests.filterWhen}
-            value={query.when}
-            options={DATE_FILTERS.map((option) => ({ value: option.value, label: option.label }))}
-            onChange={(when) => go({ when, page: 1 })}
-          />
-          {filtersActive ? (
-            <Link
-              href={requestListHref(query, {
-                q: "",
-                status: "",
-                workflow: "",
-                when: "",
-                period: "",
-                page: 1,
-              })}
-              className={cn(buttonVariants({ variant: "outline" }), "h-11 rounded-[12px] px-3")}
-            >
-              {he.actions.clearFilters}
-            </Link>
-          ) : null}
-          <p className="ms-auto text-sm text-muted-foreground">
-            {he.requests.resultsCount.replace("{count}", String(page.total))}
-          </p>
+          <div className="col-span-4 flex items-center gap-3">
+            <FilterSelect
+              label={he.requests.filterStatus}
+              value={query.period === "month" ? "completed_month" : query.status}
+              options={STATUS_FILTERS.map((option) => ({ value: option.value, label: option.label }))}
+              onChange={(status) =>
+                go({
+                  status: status === "completed_month" ? "completed_month" : status,
+                  period: "",
+                  page: 1,
+                })
+              }
+            />
+            <FilterSelect
+              label={he.requests.filterWhen}
+              value={query.when}
+              options={RECURRENCE_FILTERS.map((option) => ({ value: option.value, label: option.label }))}
+              onChange={(when) => go({ when, page: 1 })}
+            />
+            {filtersActive ? (
+              <Link
+                href={requestListHref(query, {
+                  q: "",
+                  status: "",
+                  workflow: "",
+                  when: "",
+                  period: "",
+                  page: 1,
+                })}
+                className={cn(buttonVariants({ variant: "outline" }), "h-11 shrink-0 rounded-[12px] px-3")}
+              >
+                {he.actions.clearFilters}
+              </Link>
+            ) : null}
+            <p className="text-sm text-muted-foreground">
+              {he.requests.showingEventsCount
+                .replace("{shown}", String(page.total))
+                .replace("{total}", String(summary.total))}
+            </p>
+          </div>
         </div>
 
         {!items.length ? (
@@ -310,49 +324,38 @@ function SummaryCard({
   hint,
   value,
   icon: Icon,
-  active = false,
-  disabled = false,
-  tone = "teal",
-  onClick,
+  variant = "default",
 }: {
   title: string;
   hint: string;
   value: number | string;
-  icon: typeof Inbox;
-  active?: boolean;
-  disabled?: boolean;
-  tone?: "teal" | "amber" | "red";
-  onClick?: () => void;
+  icon: LucideIcon;
+  variant?: "default" | "accent";
 }) {
-  const dot =
-    tone === "amber" ? "bg-amber-600" : tone === "red" ? "bg-destructive" : "bg-primary";
-  const className = cn(
-    "rounded-[16px] border bg-surface px-5 py-4 text-start transition-colors",
-    active ? "border-primary bg-primary/5" : "border-border",
-    disabled ? "cursor-default opacity-80" : "hover:border-primary/40",
-  );
-
-  const content = (
-    <>
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+  const accent = variant === "accent";
+  return (
+    <div
+      className={cn(
+        "min-w-0 flex-1 px-5 py-4 text-start not-first:border-s not-first:border-border",
+        accent ? "bg-primary text-[#d0f0c0]" : "bg-surface text-muted-foreground",
+      )}
+    >
+      <div className={cn("flex items-center gap-2 text-sm", accent ? "text-[#d0f0c0]" : "text-muted-foreground")}>
         <Icon className="size-4" strokeWidth={1.75} />
         <span>{title}</span>
       </div>
-      <p className="mt-3 text-3xl font-semibold tracking-tight text-foreground">{value}</p>
-      <p className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-        <span className={cn("size-1.5 rounded-full", dot)} />
+      <p
+        className={cn(
+          "mt-3 text-3xl font-semibold tracking-tight",
+          accent ? "text-[#d0f0c0]" : "text-foreground",
+        )}
+      >
+        {value}
+      </p>
+      <p className={cn("mt-2 flex items-center gap-2 text-xs", accent ? "text-[#d0f0c0]" : "text-muted-foreground")}>
+        <Astroid className="size-3.5 shrink-0" strokeWidth={1.75} />
         {hint}
       </p>
-    </>
-  );
-
-  if (disabled || !onClick) {
-    return <div className={className}>{content}</div>;
-  }
-
-  return (
-    <button type="button" className={className} onClick={onClick}>
-      {content}
-    </button>
+    </div>
   );
 }

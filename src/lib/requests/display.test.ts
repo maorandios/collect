@@ -272,9 +272,9 @@ test("invalid status and due filters are ignored without due_at", () => {
   assert.equal(requestListHref(query, { when: "overdue" }).includes("when="), false);
 });
 
-test("month period keeps completed requests from the current Jerusalem month", () => {
+test("completed month status filter keeps requests from the current Jerusalem month", () => {
   const now = new Date("2026-08-18T12:00:00+03:00");
-  const query = parseRequestListQuery({ period: "month" });
+  const query = parseRequestListQuery({ status: "completed_month" });
   assert.equal(
     matchesRequestFilters(item({ status: "completed", completedAt: "2026-08-05T10:00:00.000Z" }), query, now),
     true,
@@ -284,6 +284,14 @@ test("month period keeps completed requests from the current Jerusalem month", (
     false,
   );
   assert.equal(matchesRequestFilters(item({ status: "sent" }), query, now), false);
+  assert.equal(
+    matchesRequestFilters(
+      item({ status: "completed", completedAt: "2026-08-05T10:00:00.000Z" }),
+      parseRequestListQuery({ period: "month" }),
+      now,
+    ),
+    true,
+  );
 });
 
 test("search matches process name, recipient name and email", () => {
@@ -293,28 +301,21 @@ test("search matches process name, recipient name and email", () => {
   assert.equal(matchesRequestFilters(item({ processName: "רוני-דוח" }), parseRequestListQuery({ q: "דוח" })), true);
 });
 
-test("date filter today and week uses scheduled_for, not a due date", () => {
-  const now = new Date("2026-08-18T12:00:00+03:00");
-  assert.equal(
-    matchesRequestFilters(item(), parseRequestListQuery({ when: "today" }), now),
-    true,
-  );
-  assert.equal(
-    matchesRequestFilters(
-      item({ scheduledFor: "2026-08-10T07:00:00.000Z" }),
-      parseRequestListQuery({ when: "today" }),
-      now,
-    ),
-    false,
-  );
-  assert.equal(
-    matchesRequestFilters(
-      item({ scheduledFor: "2026-08-16T07:00:00.000Z" }),
-      parseRequestListQuery({ when: "week" }),
-      now,
-    ),
-    true,
-  );
+test("recurrence filter matches schedule type", () => {
+  const weekly = item({
+    schedule: { type: "weekly", weekday: 1, time: "10:00", timezone: "Asia/Jerusalem" },
+  });
+  const monthly = item({
+    schedule: { type: "monthly", day: 1, time: "10:00", timezone: "Asia/Jerusalem" },
+  });
+  const once = item({
+    schedule: { type: "once", date: "2026-08-18", time: "10:00", timezone: "Asia/Jerusalem" },
+  });
+  assert.equal(matchesRequestFilters(weekly, parseRequestListQuery({ when: "weekly" })), true);
+  assert.equal(matchesRequestFilters(monthly, parseRequestListQuery({ when: "weekly" })), false);
+  assert.equal(matchesRequestFilters(monthly, parseRequestListQuery({ when: "monthly" })), true);
+  assert.equal(matchesRequestFilters(once, parseRequestListQuery({ when: "once" })), true);
+  assert.equal(matchesRequestFilters(weekly, parseRequestListQuery({ when: "once" })), false);
 });
 
 test("waiting filter matches sent requests only", () => {
